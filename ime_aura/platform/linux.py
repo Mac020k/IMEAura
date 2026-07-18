@@ -10,7 +10,7 @@ import subprocess
 from PySide6.QtCore import QRect
 from PySide6.QtWidgets import QApplication
 
-from keyboard_aura.platform.base import geometry_from_cursor, geometry_from_point
+from ime_aura.platform.base import geometry_from_cursor, geometry_from_point
 
 logger = logging.getLogger(__name__)
 

@@ -1,17 +1,17 @@
 <p align="center">
-  <img src="img/icon.ico" alt="Keyboard Aura Icon" width="180">
+  <img src="img/icon.ico" alt="IME Aura Icon" width="180">
 </p>
 
-# Keyboard Aura
+# IME Aura
 
-Keyboard Aura は、現在の IME 入力状態（日本語入力か英語入力か）に応じて、画面の縁にグラデーションを表示するオーバーレイツールです。Windows / macOS / Linux で動作します。入力状態を視覚的に把握しやすくすることで、入力ミスを防げます。
+IME Aura は、現在の IME 入力状態（日本語入力か英語入力か）に応じて、画面の縁にグラデーションを表示するオーバーレイツールです。Windows / macOS / Linux で動作します。入力状態を視覚的に把握しやすくすることで、入力ミスを防げます。
 
 ## プロジェクト構成
 
 ```
-KeyboardAura/
-├── keyboard_aura/
-│   ├── __main__.py          # python -m keyboard_aura
+IMEAura/
+├── ime_aura/
+│   ├── __main__.py          # python -m ime_aura
 │   ├── main.py              # アプリケーション起動
 │   ├── resources.py         # リソースパス解決
 │   ├── platform/            # OS 別 IME・画面検知
@@ -64,7 +64,7 @@ pip install -r requirements.txt
 プロジェクトのルートディレクトリで次を実行します。
 
 ```bash
-python -m keyboard_aura
+python -m ime_aura
 ```
 
 起動すると、画面の縁にグラデーションが表示され、小さなコントロールウィンドウも開きます。
@@ -90,13 +90,13 @@ pip install pyinstaller
 **Windows:**
 
 ```bash
-pyinstaller --noconsole --onefile --icon=img/icon.ico --add-data "img/icon.ico;img" -n KeyboardAura keyboard_aura/__main__.py
+pyinstaller --noconsole --onefile --icon=img/icon.ico --add-data "img/icon.ico;img" -n IMEAura ime_aura/__main__.py
 ```
 
 **macOS / Linux:**
 
 ```bash
-pyinstaller --noconsole --onefile --icon=img/icon.ico --add-data "img/icon.ico:img" -n KeyboardAura keyboard_aura/__main__.py
+pyinstaller --noconsole --onefile --icon=img/icon.ico --add-data "img/icon.ico:img" -n IMEAura ime_aura/__main__.py
 ```
 
 3. 完了後、`dist` フォルダに実行ファイルが生成されます。

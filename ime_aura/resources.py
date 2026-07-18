@@ -11,6 +11,6 @@ def resource_path(relative_path: str) -> str:
     try:
         base_path = sys._MEIPASS  # type: ignore[attr-defined]
     except AttributeError:
-        # Package lives at keyboard_aura/; images live at repo root img/
+        # Package lives at ime_aura/; images live at repo root img/
         base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     return os.path.join(base_path, relative_path)

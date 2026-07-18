@@ -13,14 +13,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from keyboard_aura.ui.overlay import ImeOverlay
+from ime_aura.ui.overlay import ImeOverlay
 
 
 class ControlWindow(QWidget):
     def __init__(self, overlay: ImeOverlay):
         super().__init__()
         self.overlay = overlay
-        self.setWindowTitle("Keyboard Aura")
+        self.setWindowTitle("IME Aura")
 
         layout = QVBoxLayout()
 

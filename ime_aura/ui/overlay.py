@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QLinearGradient, QPainter
 from PySide6.QtWidgets import QApplication, QWidget
 
-from keyboard_aura.platform.base import PlatformBackend
+from ime_aura.platform.base import PlatformBackend
 
 
 class ImeOverlay(QWidget):

@@ -8,9 +8,9 @@ import sys
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from keyboard_aura.platform import create_backend
-from keyboard_aura.resources import resource_path
-from keyboard_aura.ui import ControlWindow, ImeOverlay
+from ime_aura.platform import create_backend
+from ime_aura.resources import resource_path
+from ime_aura.ui import ControlWindow, ImeOverlay
 
 
 def main() -> None:
