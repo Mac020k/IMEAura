@@ -1,4 +1,4 @@
-"""Persistent color settings for IME Aura."""
+"""Persistent application settings for IME Aura."""
 
 from __future__ import annotations
 
@@ -15,17 +15,37 @@ logger = logging.getLogger(__name__)
 DEFAULT_COLOR_JP = QColor(248, 40, 70, 255)
 DEFAULT_COLOR_EN = QColor(45, 129, 253, 255)
 
+DISPLAY_MODE_ALWAYS = "always"
+DISPLAY_MODE_ON_FOCUS = "on_focus"
+DISPLAY_MODES = frozenset({DISPLAY_MODE_ALWAYS, DISPLAY_MODE_ON_FOCUS})
+
 
 @dataclass
-class ColorSettings:
+class AppSettings:
     color_jp: QColor
     color_en: QColor
+    display_mode: str
+    show_on_hover: bool
 
 
-def default_colors() -> ColorSettings:
-    return ColorSettings(
+def default_settings() -> AppSettings:
+    return AppSettings(
         color_jp=QColor(DEFAULT_COLOR_JP),
         color_en=QColor(DEFAULT_COLOR_EN),
+        display_mode=DISPLAY_MODE_ALWAYS,
+        show_on_hover=False,
+    )
+
+
+def default_colors() -> AppSettings:
+    """Return defaults with colors only reset; display options come from current file if present."""
+    current = load_settings()
+    defaults = default_settings()
+    return AppSettings(
+        color_jp=defaults.color_jp,
+        color_en=defaults.color_en,
+        display_mode=current.display_mode,
+        show_on_hover=current.show_on_hover,
     )
 
 
@@ -59,9 +79,30 @@ def _color_from_list(values: object, fallback: QColor) -> QColor:
     return QColor(r, g, b, a)
 
 
-def load_colors() -> ColorSettings:
+def _normalize_display_mode(value: object) -> str:
+    if isinstance(value, str) and value in DISPLAY_MODES:
+        return value
+    return DISPLAY_MODE_ALWAYS
+
+
+def _normalize_settings(data: dict) -> AppSettings:
+    defaults = default_settings()
+    display_mode = _normalize_display_mode(data.get("display_mode"))
+    show_on_hover = bool(data.get("show_on_hover", False))
+    # Hover is only valid with on-focus mode
+    if display_mode != DISPLAY_MODE_ON_FOCUS:
+        show_on_hover = False
+    return AppSettings(
+        color_jp=_color_from_list(data.get("color_jp"), defaults.color_jp),
+        color_en=_color_from_list(data.get("color_en"), defaults.color_en),
+        display_mode=display_mode,
+        show_on_hover=show_on_hover,
+    )
+
+
+def load_settings() -> AppSettings:
     path = settings_path()
-    defaults = default_colors()
+    defaults = default_settings()
     if not os.path.isfile(path):
         return defaults
 
@@ -74,23 +115,40 @@ def load_colors() -> ColorSettings:
 
     if not isinstance(data, dict):
         return defaults
-
-    return ColorSettings(
-        color_jp=_color_from_list(data.get("color_jp"), defaults.color_jp),
-        color_en=_color_from_list(data.get("color_en"), defaults.color_en),
-    )
+    return _normalize_settings(data)
 
 
-def save_colors(color_jp: QColor, color_en: QColor) -> None:
+def save_settings(settings: AppSettings) -> None:
     path = settings_path()
+    display_mode = _normalize_display_mode(settings.display_mode)
+    show_on_hover = bool(settings.show_on_hover) and display_mode == DISPLAY_MODE_ON_FOCUS
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         payload = {
-            "color_jp": _color_to_list(color_jp),
-            "color_en": _color_to_list(color_en),
+            "color_jp": _color_to_list(settings.color_jp),
+            "color_en": _color_to_list(settings.color_en),
+            "display_mode": display_mode,
+            "show_on_hover": show_on_hover,
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
             f.write("\n")
     except OSError as exc:
         logger.warning("Failed to save settings to %s: %s", path, exc)
+
+
+# Backwards-compatible aliases used by older call sites
+def load_colors() -> AppSettings:
+    return load_settings()
+
+
+def save_colors(color_jp: QColor, color_en: QColor) -> None:
+    current = load_settings()
+    save_settings(
+        AppSettings(
+            color_jp=color_jp,
+            color_en=color_en,
+            display_mode=current.display_mode,
+            show_on_hover=current.show_on_hover,
+        )
+    )

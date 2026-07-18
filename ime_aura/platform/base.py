@@ -23,6 +23,14 @@ class PlatformBackend(Protocol):
         """Apply platform-specific application identity (e.g. Windows AppUserModelID)."""
         ...
 
+    def is_text_input_focused(self) -> bool:
+        """Return True when a text input control currently has keyboard focus."""
+        ...
+
+    def is_text_input_hovered(self) -> bool:
+        """Return True when the mouse cursor is over a text input control."""
+        ...
+
 
 def geometry_from_point(app: QApplication, x: int, y: int) -> QRect | None:
     """Find the Qt screen geometry that contains the given point."""

@@ -9,6 +9,7 @@ from PySide6.QtCore import QRect
 from PySide6.QtWidgets import QApplication
 
 from ime_aura.platform.base import geometry_from_point
+from ime_aura.platform import win_text_input
 
 user32 = ctypes.windll.user32
 imm32 = ctypes.windll.imm32
@@ -62,3 +63,9 @@ class WindowsBackend:
             return geo
 
         return geometry_from_point(app, rect.left, rect.top)
+
+    def is_text_input_focused(self) -> bool:
+        return win_text_input.is_text_input_focused()
+
+    def is_text_input_hovered(self) -> bool:
+        return win_text_input.is_text_input_hovered()

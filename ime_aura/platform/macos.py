@@ -10,6 +10,7 @@ from PySide6.QtCore import QRect
 from PySide6.QtWidgets import QApplication
 
 from ime_aura.platform.base import geometry_from_cursor, geometry_from_point
+from ime_aura.platform import mac_text_input
 
 logger = logging.getLogger(__name__)
 
@@ -257,3 +258,9 @@ class MacOSBackend:
             logger.debug("Quartz window lookup failed: %s", exc)
 
         return None
+
+    def is_text_input_focused(self) -> bool:
+        return mac_text_input.is_text_input_focused()
+
+    def is_text_input_hovered(self) -> bool:
+        return mac_text_input.is_text_input_hovered()
