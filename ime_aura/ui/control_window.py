@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -16,7 +16,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ime_aura.settings import DISPLAY_MODE_ALWAYS, DISPLAY_MODE_ON_FOCUS
+from ime_aura.settings import (
+    DISPLAY_MODE_ALWAYS,
+    DISPLAY_MODE_ON_FOCUS,
+    UI_FONT_SIZE_LARGE,
+    UI_FONT_SIZE_MEDIUM,
+    UI_FONT_SIZE_SMALL,
+    ui_font_point_size,
+)
 from ime_aura.ui.overlay import ImeOverlay
 
 
@@ -27,6 +34,21 @@ class ControlWindow(QWidget):
         self.setWindowTitle("IME Aura")
 
         layout = QVBoxLayout()
+
+        font_layout = QHBoxLayout()
+        font_layout.addWidget(QLabel("文字サイズ:"))
+        self.radio_font_small = QRadioButton("小")
+        self.radio_font_medium = QRadioButton("中")
+        self.radio_font_large = QRadioButton("大")
+        self.font_group = QButtonGroup(self)
+        self.font_group.addButton(self.radio_font_small)
+        self.font_group.addButton(self.radio_font_medium)
+        self.font_group.addButton(self.radio_font_large)
+        font_layout.addWidget(self.radio_font_small)
+        font_layout.addWidget(self.radio_font_medium)
+        font_layout.addWidget(self.radio_font_large)
+        font_layout.addStretch(1)
+        layout.addLayout(font_layout)
 
         jp_layout = QHBoxLayout()
         jp_label = QLabel("日本語入力時の色:")
@@ -73,15 +95,58 @@ class ControlWindow(QWidget):
         self.hover_check.setChecked(self.overlay.show_on_hover)
         self._sync_hover_enabled()
 
+        font_size = self.overlay.ui_font_size
+        if font_size == UI_FONT_SIZE_SMALL:
+            self.radio_font_small.setChecked(True)
+        elif font_size == UI_FONT_SIZE_LARGE:
+            self.radio_font_large.setChecked(True)
+        else:
+            self.radio_font_medium.setChecked(True)
+
         self.radio_always.toggled.connect(self._on_display_mode_changed)
         self.radio_on_focus.toggled.connect(self._on_display_mode_changed)
         self.hover_check.toggled.connect(self._on_hover_toggled)
+        self.radio_font_small.toggled.connect(self._on_font_size_changed)
+        self.radio_font_medium.toggled.connect(self._on_font_size_changed)
+        self.radio_font_large.toggled.connect(self._on_font_size_changed)
 
         exit_btn = QPushButton("アプリケーションを終了")
         exit_btn.clicked.connect(QApplication.quit)
         layout.addWidget(exit_btn)
 
         self.setLayout(layout)
+        self._apply_ui_font_size(self.overlay.ui_font_size)
+
+    def _apply_ui_font_size(self, size_key: str) -> None:
+        font = QFont(self.font())
+        font.setPointSize(ui_font_point_size(size_key))
+        self.setFont(font)
+        for widget in self.findChildren(QWidget):
+            widget.setFont(font)
+
+        # Preview labels: each option always shows the size it would apply.
+        for radio, key in (
+            (self.radio_font_small, UI_FONT_SIZE_SMALL),
+            (self.radio_font_medium, UI_FONT_SIZE_MEDIUM),
+            (self.radio_font_large, UI_FONT_SIZE_LARGE),
+        ):
+            preview = QFont(font)
+            preview.setPointSize(ui_font_point_size(key))
+            radio.setFont(preview)
+
+        self.adjustSize()
+
+    def _on_font_size_changed(self, checked: bool) -> None:
+        if not checked:
+            return
+        if self.radio_font_small.isChecked():
+            size_key = UI_FONT_SIZE_SMALL
+        elif self.radio_font_large.isChecked():
+            size_key = UI_FONT_SIZE_LARGE
+        else:
+            size_key = UI_FONT_SIZE_MEDIUM
+        self.overlay.set_ui_font_size(size_key)
+        self._apply_ui_font_size(size_key)
 
     def _sync_hover_enabled(self) -> None:
         enabled = self.radio_on_focus.isChecked()
@@ -99,7 +164,6 @@ class ControlWindow(QWidget):
         else:
             self.overlay.set_display_mode(DISPLAY_MODE_ON_FOCUS)
         self._sync_hover_enabled()
-        # Re-apply hover state after mode change
         if self.radio_on_focus.isChecked():
             self.overlay.set_show_on_hover(self.hover_check.isChecked())
 

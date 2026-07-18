@@ -19,6 +19,18 @@ DISPLAY_MODE_ALWAYS = "always"
 DISPLAY_MODE_ON_FOCUS = "on_focus"
 DISPLAY_MODES = frozenset({DISPLAY_MODE_ALWAYS, DISPLAY_MODE_ON_FOCUS})
 
+UI_FONT_SIZE_SMALL = "small"
+UI_FONT_SIZE_MEDIUM = "medium"
+UI_FONT_SIZE_LARGE = "large"
+UI_FONT_SIZES = frozenset(
+    {UI_FONT_SIZE_SMALL, UI_FONT_SIZE_MEDIUM, UI_FONT_SIZE_LARGE}
+)
+UI_FONT_POINT_SIZES = {
+    UI_FONT_SIZE_SMALL: 9,
+    UI_FONT_SIZE_MEDIUM: 11,
+    UI_FONT_SIZE_LARGE: 14,
+}
+
 
 @dataclass
 class AppSettings:
@@ -26,6 +38,7 @@ class AppSettings:
     color_en: QColor
     display_mode: str
     show_on_hover: bool
+    ui_font_size: str
 
 
 def default_settings() -> AppSettings:
@@ -34,6 +47,7 @@ def default_settings() -> AppSettings:
         color_en=QColor(DEFAULT_COLOR_EN),
         display_mode=DISPLAY_MODE_ALWAYS,
         show_on_hover=False,
+        ui_font_size=UI_FONT_SIZE_MEDIUM,
     )
 
 
@@ -46,6 +60,7 @@ def default_colors() -> AppSettings:
         color_en=defaults.color_en,
         display_mode=current.display_mode,
         show_on_hover=current.show_on_hover,
+        ui_font_size=current.ui_font_size,
     )
 
 
@@ -85,6 +100,19 @@ def _normalize_display_mode(value: object) -> str:
     return DISPLAY_MODE_ALWAYS
 
 
+def _normalize_ui_font_size(value: object) -> str:
+    if isinstance(value, str) and value in UI_FONT_SIZES:
+        return value
+    return UI_FONT_SIZE_MEDIUM
+
+
+def ui_font_point_size(size_key: str) -> int:
+    return UI_FONT_POINT_SIZES.get(
+        _normalize_ui_font_size(size_key),
+        UI_FONT_POINT_SIZES[UI_FONT_SIZE_MEDIUM],
+    )
+
+
 def _normalize_settings(data: dict) -> AppSettings:
     defaults = default_settings()
     display_mode = _normalize_display_mode(data.get("display_mode"))
@@ -97,6 +125,7 @@ def _normalize_settings(data: dict) -> AppSettings:
         color_en=_color_from_list(data.get("color_en"), defaults.color_en),
         display_mode=display_mode,
         show_on_hover=show_on_hover,
+        ui_font_size=_normalize_ui_font_size(data.get("ui_font_size")),
     )
 
 
@@ -122,6 +151,7 @@ def save_settings(settings: AppSettings) -> None:
     path = settings_path()
     display_mode = _normalize_display_mode(settings.display_mode)
     show_on_hover = bool(settings.show_on_hover) and display_mode == DISPLAY_MODE_ON_FOCUS
+    ui_font_size = _normalize_ui_font_size(settings.ui_font_size)
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         payload = {
@@ -129,6 +159,7 @@ def save_settings(settings: AppSettings) -> None:
             "color_en": _color_to_list(settings.color_en),
             "display_mode": display_mode,
             "show_on_hover": show_on_hover,
+            "ui_font_size": ui_font_size,
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
@@ -150,5 +181,6 @@ def save_colors(color_jp: QColor, color_en: QColor) -> None:
             color_en=color_en,
             display_mode=current.display_mode,
             show_on_hover=current.show_on_hover,
+            ui_font_size=current.ui_font_size,
         )
     )
