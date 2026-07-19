@@ -22,12 +22,15 @@ jobs:
           - os: windows-latest
             artifact_name: IMEAura-windows-x64
             data_sep: ";"
+            app_icon: img/icon.ico
           - os: ubuntu-latest
             artifact_name: IMEAura-linux-x64
             data_sep: ":"
+            app_icon: img/icon.ico
           - os: macos-latest
             artifact_name: IMEAura-macos-arm64
             data_sep: ":"
+            app_icon: img/icon.icns
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -45,7 +48,7 @@ jobs:
       - name: Build application
         run: >
           python -m PyInstaller --noconsole --onedir
-          --icon=img/icon.ico
+          --icon=${{ matrix.app_icon }}
           --add-data "img/icon.ico${{ matrix.data_sep }}img"
           --add-data "LICENSE${{ matrix.data_sep }}."
           --add-data "THIRD_PARTY_NOTICES.md${{ matrix.data_sep }}."
@@ -57,10 +60,15 @@ jobs:
         run: |
           Compress-Archive -Path dist/IMEAura/* -DestinationPath ${{ matrix.artifact_name }}.zip
 
-      - name: Package (Unix)
-        if: runner.os != 'Windows'
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
         run: |
           (cd dist/IMEAura && zip -r "../../${{ matrix.artifact_name }}.zip" .)
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          ditto -c -k --keepParent dist/IMEAura.app "${{ matrix.artifact_name }}.zip"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

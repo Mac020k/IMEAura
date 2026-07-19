@@ -25,7 +25,8 @@ IMEAura/
 │       └── about_dialog.py  # バージョン情報・ライセンス表記
 ├── img/
 │   ├── icon.png
-│   └── icon.ico
+│   ├── icon.ico
+│   └── icon.icns              # macOS アプリバンドル用
 ├── requirements.txt
 ├── LICENSE
 ├── THIRD_PARTY_NOTICES.md   # 第三者ソフトウェア表記
@@ -107,25 +108,33 @@ pip install pyinstaller
 pyinstaller --noconsole --onedir --icon=img/icon.ico --add-data "img/icon.ico;img" --add-data "LICENSE;." --add-data "THIRD_PARTY_NOTICES.md;." -n IMEAura ime_aura/__main__.py
 ```
 
-**macOS / Linux:**
+**Linux:**
 
 ```bash
 pyinstaller --noconsole --onedir --icon=img/icon.ico --add-data "img/icon.ico:img" --add-data "LICENSE:." --add-data "THIRD_PARTY_NOTICES.md:." -n IMEAura ime_aura/__main__.py
 ```
 
-3. 完了後、`dist/IMEAura/` に実行ファイルと依存ライブラリが生成されます。このフォルダ一式を配布してください。
+**macOS:**
+
+`.app` バンドルには `img/icon.icns` を指定します（実行時アイコン用の `icon.ico` は引き続き同梱します）。
+
+```bash
+pyinstaller --noconsole --onedir --icon=img/icon.icns --add-data "img/icon.ico:img" --add-data "LICENSE:." --add-data "THIRD_PARTY_NOTICES.md:." -n IMEAura ime_aura/__main__.py
+```
+
+3. 完了後、Windows / Linux は `dist/IMEAura/`、macOS は `dist/IMEAura.app` に成果物が生成されます。この一式を配布してください。
 
 ## GitHub リリースの自動作成
 
-`main` ブランチへプッシュするたびに、GitHub Actions が Windows / Linux / macOS 版アプリケーションをビルドし、新しいプレリリースを作成します。リリースは `v1.0.0-build.<GitHub Actions の実行番号>` 形式の一意なタグで作成され、プッシュされたコミットを指します。
+`main` ブランチへプッシュするたびに、GitHub Actions が Windows / Linux / macOS 版アプリケーションをビルドし、新しいプレリリースを作成します。リリースは `v1.0.<GitHub Actions の実行番号>` 形式の一意なタグで作成され、プッシュされたコミットを指します。
 
-各リリースの Assets には、次の zip が添付されます。展開後、フォルダ内の実行ファイルを起動してください。
+各リリースの Assets には、次の zip が添付されます。
 
-| Asset | 対象 |
-| --- | --- |
-| `IMEAura-windows-x64.zip` | Windows (x64) |
-| `IMEAura-linux-x64.zip` | Linux (x64) |
-| `IMEAura-macos-arm64.zip` | macOS (Apple Silicon) |
+| Asset | 対象 | 展開後 |
+| --- | --- | --- |
+| `IMEAura-windows-x64.zip` | Windows (x64) | フォルダ内の `IMEAura.exe` |
+| `IMEAura-linux-x64.zip` | Linux (x64) | フォルダ内の `IMEAura` |
+| `IMEAura-macos-arm64.zip` | macOS (Apple Silicon) | `IMEAura.app` |
 
 ## ライセンス
 
