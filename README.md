@@ -74,6 +74,10 @@ python -m ime_aura
 
 ### コントロールウィンドウ
 
+<p align="center">
+  <img src="img/control_window.png" alt="Control Window" width="300">
+</p>
+
 - **日本語入力時の色**: カラーピッカーで色と透明度を変更できます。
 - **英語入力時の色**: カラーピッカーで色と透明度を変更できます。
 - **デフォルトの色に戻す**: 色を初期値に戻します。
@@ -113,9 +117,15 @@ pyinstaller --noconsole --onedir --icon=img/icon.ico --add-data "img/icon.ico:im
 
 ## GitHub リリースの自動作成
 
-`main` ブランチへプッシュするたびに、GitHub Actions が Windows 版アプリケーションをビルドし、新しいプレリリースを作成します。リリースは `v1.0.0-build.<GitHub Actions の実行番号>` 形式の一意なタグで作成され、プッシュされたコミットを指します。
+`main` ブランチへプッシュするたびに、GitHub Actions が Windows / Linux / macOS 版アプリケーションをビルドし、新しいプレリリースを作成します。リリースは `v1.0.0-build.<GitHub Actions の実行番号>` 形式の一意なタグで作成され、プッシュされたコミットを指します。
 
-各リリースの Assets には、実行ファイル `IMEAura.exe` と必要なライブラリを含む `IMEAura-windows-x64.zip` が添付されます。展開後、フォルダ内の `IMEAura.exe` を実行してください。
+各リリースの Assets には、次の zip が添付されます。展開後、フォルダ内の実行ファイルを起動してください。
+
+| Asset | 対象 |
+| --- | --- |
+| `IMEAura-windows-x64.zip` | Windows (x64) |
+| `IMEAura-linux-x64.zip` | Linux (x64) |
+| `IMEAura-macos-arm64.zip` | macOS (Apple Silicon) |
 
 ## ライセンス
 
