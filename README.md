@@ -47,7 +47,7 @@ IMEAura/
 
 | OS | IME 検知 | 画面追従 | テキスト入力検知 |
 | --- | --- | --- | --- |
-| Windows | IMM32（タイムアウト付き） | アクティブウィンドウ | ウィンドウクラス + UIA + MSAA |
+| Windows | IMM32（フォーカス窓優先・タイムアウト付き） | アクティブウィンドウ | ウィンドウクラス + UIA + MSAA |
 | macOS | Carbon Text Input Source | Quartz（失敗時はカーソル位置） | Accessibility（許可が必要な場合あり） |
 | Linux | Fcitx5 または IBus（自動検出） | X11 + `xdotool`（Wayland はカーソル位置にフォールバック） | AT-SPI（`python3-gi` + Atspi がある場合） |
 

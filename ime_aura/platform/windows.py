@@ -27,6 +27,28 @@ IME_MESSAGE_TIMEOUT_MS = 25
 TEXT_INPUT_POLL_INTERVAL_SECONDS = 0.25
 
 
+def _focus_hwnd(fg_hwnd: int) -> int:
+    class _GUITHREADINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", ctypes.c_ulong),
+            ("flags", ctypes.c_ulong),
+            ("hwndActive", ctypes.wintypes.HWND),
+            ("hwndFocus", ctypes.wintypes.HWND),
+            ("hwndCapture", ctypes.wintypes.HWND),
+            ("hwndMenuOwner", ctypes.wintypes.HWND),
+            ("hwndMoveSize", ctypes.wintypes.HWND),
+            ("hwndCaret", ctypes.wintypes.HWND),
+            ("rcCaret", ctypes.wintypes.RECT),
+        ]
+
+    info = _GUITHREADINFO()
+    info.cbSize = ctypes.sizeof(_GUITHREADINFO)
+    tid = user32.GetWindowThreadProcessId(fg_hwnd, None)
+    if user32.GetGUIThreadInfo(tid, ctypes.byref(info)) and info.hwndFocus:
+        return int(info.hwndFocus)
+    return int(fg_hwnd)
+
+
 def _send_ime_control(hwnd: int, command: int) -> int | None:
     """Send WM_IME_CONTROL with a short timeout so hung IME windows cannot block UI."""
     result = ctypes.c_size_t()
@@ -42,6 +64,18 @@ def _send_ime_control(hwnd: int, command: int) -> int | None:
     if not ok:
         return None
     return int(result.value)
+
+
+def _ime_window_is_japanese(ime_wnd: int) -> bool:
+    if not ime_wnd:
+        return False
+    status = _send_ime_control(ime_wnd, IMC_GETOPENSTATUS)
+    if not status:
+        return False
+    mode = _send_ime_control(ime_wnd, IMC_GETCONVERSIONMODE)
+    if mode is None:
+        return False
+    return bool(mode & IME_CMODE_NATIVE)
 
 
 class WindowsBackend:
@@ -128,18 +162,17 @@ class WindowsBackend:
         if not hwnd:
             return False
 
+        focus = _focus_hwnd(hwnd)
+        focus_ime_wnd = imm32.ImmGetDefaultIMEWnd(focus) if focus else 0
         default_ime_wnd = imm32.ImmGetDefaultIMEWnd(hwnd)
-        if not default_ime_wnd:
-            return False
 
-        status = _send_ime_control(default_ime_wnd, IMC_GETOPENSTATUS)
-        if not status:
-            return False
-
-        mode = _send_ime_control(default_ime_wnd, IMC_GETCONVERSIONMODE)
-        if mode is None:
-            return False
-        return bool(mode & IME_CMODE_NATIVE)
+        # Prefer the focused control's IME window. Apps like Notepad keep real IME
+        # state on RichEditD2DPT, while the outer frame often reports closed.
+        if _ime_window_is_japanese(focus_ime_wnd):
+            return True
+        if focus_ime_wnd != default_ime_wnd and _ime_window_is_japanese(default_ime_wnd):
+            return True
+        return False
 
     def get_active_screen_geometry(self, app: QApplication) -> QRect | None:
         hwnd = user32.GetForegroundWindow()
