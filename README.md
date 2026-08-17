@@ -12,24 +12,29 @@ IME Aura は、現在の IME 入力状態（日本語入力か英語入力か）
 IMEAura/
 ├── ime_aura/
 │   ├── __main__.py          # python -m ime_aura
-│   ├── main.py              # アプリケーション起動
-│   ├── resources.py         # リソースパス解決
-│   ├── platform/            # OS 別 IME・画面検知
+│   ├── main.py              # Application entry
+│   ├── resources.py         # Resource path resolution
+│   ├── settings.py          # Persistent settings
+│   ├── platform/            # OS-specific IME / screen detection
 │   │   ├── base.py
 │   │   ├── windows.py
 │   │   ├── macos.py
 │   │   └── linux.py
 │   └── ui/
-│       ├── overlay.py       # 縁グラデーション表示
+│       ├── theme.py         # Signal Edge tokens + stylesheet (HIG-aligned)
+│       ├── widgets.py       # Squircle swatches, feedback buttons
+│       ├── icons.py         # SVG icon loading
+│       ├── overlay.py       # Edge gradient overlay
 │       ├── control_window.py
-│       └── about_dialog.py  # バージョン情報・ライセンス表記
+│       └── about_dialog.py  # Version / license notices
 ├── img/
+│   ├── icon.svg             # Runtime UI / window icon
 │   ├── icon.png
 │   ├── icon.ico
-│   └── icon.icns              # macOS アプリバンドル用
+│   └── icon.icns              # macOS app bundle icon
 ├── requirements.txt
 ├── LICENSE
-├── THIRD_PARTY_NOTICES.md   # 第三者ソフトウェア表記
+├── THIRD_PARTY_NOTICES.md   # Third-party notices
 └── README.md
 ```
 
@@ -74,22 +79,24 @@ python -m ime_aura
 
 起動すると、画面の縁にグラデーションが表示され、小さなコントロールウィンドウも開きます。
 
-### コントロールウィンドウ
+### Control window
 
 <p align="center">
   <img src="img/control_window.png" alt="Control Window" width="300">
 </p>
 
-- **日本語入力時の色**: カラーピッカーで色と透明度を変更できます。
-- **英語入力時の色**: カラーピッカーで色と透明度を変更できます。
-- **デフォルトの色に戻す**: 色を初期値に戻します。
-- **グラデーションの幅**: スライダーまたは数値入力で縁のグラデーション幅（1〜100 px）を変更できます。
-- **デフォルトの幅に戻す**: グラデーション幅を初期値（15 px）に戻します。
-- **グラデーション表示**:
-  - **常に表示** / **テキスト入力時のみ**（どちらか一方）
-  - **テキストボックスへホバー時も表示**: 「テキスト入力時のみ」選択時だけ有効です
-- **バージョン情報**: ライセンスと第三者ソフトウェア表記を表示します。
-- **アプリケーションを終了**: アプリケーション全体を終了します。
+The control window uses a **Signal Edge** layout: one section per task, capsule color chips (corner radius = 50% of height), and quieter secondary actions. Window chrome stays native. Padding is fixed, so buttons, chips, and row gaps stay even while heights follow the selected text size.
+
+- **Colors**: Capsule swatches open a styled color picker, including alpha (checkerboard shows transparency). A trailing chevron, hover scale, and tooltip mark them as clickable. Restore defaults with the quiet text button; it briefly reads "戻しました".
+- **Gradient width**: The slider and pixel value sit on one row (1–100 px). Restore the default (15 px) when needed.
+- **Gradient visibility**:
+  - **Always** / **Only while typing** (mutually exclusive)
+  - **Also show when hovering a text box**: slides open only when “Only while typing” is selected
+- **Text size**: Segmented Small / Medium / Large control (11 / 13 / 16 pt). The selected segment slides under the label.
+- **About…**: Shows license and third-party notices (SVG app icon).
+- **Quit**: Asks for confirmation, then exits the entire application (overlay included).
+
+The panel fades in on open. Motion respects the OS "reduce motion" / "minimize animations" setting. Settings (colors, width, display mode, font size) persist across launches. The panel scrolls vertically only (no horizontal scroll).
 
 ## 実行ファイルの作成
 
@@ -106,13 +113,13 @@ pip install pyinstaller
 **Windows:**
 
 ```bash
-pyinstaller --noconsole --onedir --icon=img/icon.ico --add-data "img/icon.ico;img" --add-data "LICENSE;." --add-data "THIRD_PARTY_NOTICES.md;." -n IMEAura ime_aura/__main__.py
+pyinstaller --noconsole --onedir --icon=img/icon.ico --add-data "img/icon.ico;img" --add-data "img/icon.svg;img" --add-data "LICENSE;." --add-data "THIRD_PARTY_NOTICES.md;." -n IMEAura ime_aura/__main__.py
 ```
 
 **Linux:**
 
 ```bash
-pyinstaller --noconsole --onedir --icon=img/icon.ico --add-data "img/icon.ico:img" --add-data "LICENSE:." --add-data "THIRD_PARTY_NOTICES.md:." -n IMEAura ime_aura/__main__.py
+pyinstaller --noconsole --onedir --icon=img/icon.ico --add-data "img/icon.ico:img" --add-data "img/icon.svg:img" --add-data "LICENSE:." --add-data "THIRD_PARTY_NOTICES.md:." -n IMEAura ime_aura/__main__.py
 ```
 
 **macOS:**
@@ -120,7 +127,7 @@ pyinstaller --noconsole --onedir --icon=img/icon.ico --add-data "img/icon.ico:im
 `.app` バンドルには `img/icon.icns` を指定します（実行時アイコン用の `icon.ico` は引き続き同梱します）。
 
 ```bash
-pyinstaller --noconsole --onedir --icon=img/icon.icns --add-data "img/icon.ico:img" --add-data "LICENSE:." --add-data "THIRD_PARTY_NOTICES.md:." -n IMEAura ime_aura/__main__.py
+pyinstaller --noconsole --onedir --icon=img/icon.icns --add-data "img/icon.ico:img" --add-data "img/icon.svg:img" --add-data "LICENSE:." --add-data "THIRD_PARTY_NOTICES.md:." -n IMEAura ime_aura/__main__.py
 ```
 
 3. 完了後、Windows / Linux は `dist/IMEAura/`、macOS は `dist/IMEAura.app` に成果物が生成されます。この一式を配布してください。

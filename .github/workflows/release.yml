@@ -50,6 +50,7 @@ jobs:
           python -m PyInstaller --noconsole --onedir
           --icon=${{ matrix.app_icon }}
           --add-data "img/icon.ico${{ matrix.data_sep }}img"
+          --add-data "img/icon.svg${{ matrix.data_sep }}img"
           --add-data "LICENSE${{ matrix.data_sep }}."
           --add-data "THIRD_PARTY_NOTICES.md${{ matrix.data_sep }}."
           --name IMEAura ime_aura/__main__.py

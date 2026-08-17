@@ -29,10 +29,11 @@ UI_FONT_SIZE_LARGE = "large"
 UI_FONT_SIZES = frozenset(
     {UI_FONT_SIZE_SMALL, UI_FONT_SIZE_MEDIUM, UI_FONT_SIZE_LARGE}
 )
+# HIG-aligned body scale (macOS Body ≈ 13pt); small/large remap Dynamic Type–like steps.
 UI_FONT_POINT_SIZES = {
-    UI_FONT_SIZE_SMALL: 9,
-    UI_FONT_SIZE_MEDIUM: 11,
-    UI_FONT_SIZE_LARGE: 14,
+    UI_FONT_SIZE_SMALL: 11,
+    UI_FONT_SIZE_MEDIUM: 13,
+    UI_FONT_SIZE_LARGE: 16,
 }
 
 

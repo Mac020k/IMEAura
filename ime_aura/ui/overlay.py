@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QLinearGradient, QPainter
+from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, Qt, QTimer
+from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter
 from PySide6.QtWidgets import QApplication, QWidget
 
 from ime_aura.platform.base import PlatformBackend, geometry_from_cursor
@@ -15,6 +15,22 @@ from ime_aura.settings import (
     load_settings,
     save_settings,
 )
+from ime_aura.ui import theme
+
+
+def _ease_out_alpha_stops(base: QColor) -> list[tuple[float, QColor]]:
+    """Soft linear falloff from solid edge to transparent."""
+    opaque = QColor(base)
+    mid = QColor(base)
+    mid.setAlpha(int(round(base.alpha() * 0.35)))
+    clear = QColor(base)
+    clear.setAlpha(0)
+    return [(0.0, opaque), (0.55, mid), (1.0, clear)]
+
+
+def _apply_stops(grad: QLinearGradient, base: QColor) -> None:
+    for pos, color in _ease_out_alpha_stops(base):
+        grad.setColorAt(pos, color)
 
 
 class ImeOverlay(QWidget):
@@ -38,6 +54,12 @@ class ImeOverlay(QWidget):
         self.ui_font_size = settings.ui_font_size
         self.gradient_width = settings.gradient_width
         self._gradient_visible = self._should_show_gradient()
+        self._fade = 1.0 if self._gradient_visible else 0.0
+        self._fade_anim: QPropertyAnimation | None = None
+        self._blend_color = QColor(
+            self.color_jp if self._backend.is_japanese_input() else self.color_en
+        )
+        self._color_anim: QPropertyAnimation | None = None
 
         self.is_japanese = self._backend.is_japanese_input()
 
@@ -52,15 +74,39 @@ class ImeOverlay(QWidget):
         self.timer.timeout.connect(self.check_state)
         self.timer.start(100)
 
+    def _get_fade(self) -> float:
+        return self._fade
+
+    def _set_fade(self, value: float) -> None:
+        self._fade = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    fadeOpacity = Property(float, _get_fade, _set_fade)
+
+    def _get_blend_color(self) -> QColor:
+        return self._blend_color
+
+    def _set_blend_color(self, color: QColor) -> None:
+        self._blend_color = QColor(color)
+        self.update()
+
+    blendColor = Property(QColor, _get_blend_color, _set_blend_color)
+
     def set_color_jp(self, color: QColor) -> None:
         self.color_jp = color
         self._persist_settings()
-        self.update()
+        if self.is_japanese:
+            self._animate_color_to(color)
+        else:
+            self.update()
 
     def set_color_en(self, color: QColor) -> None:
         self.color_en = color
         self._persist_settings()
-        self.update()
+        if not self.is_japanese:
+            self._animate_color_to(color)
+        else:
+            self.update()
 
     def set_display_mode(self, mode: str) -> None:
         if mode == DISPLAY_MODE_ALWAYS:
@@ -99,7 +145,7 @@ class ImeOverlay(QWidget):
         self.color_jp = colors.color_jp
         self.color_en = colors.color_en
         self._persist_settings()
-        self.update()
+        self._animate_color_to(self.color_jp if self.is_japanese else self.color_en)
 
     def _current_settings(self) -> AppSettings:
         return AppSettings(
@@ -134,8 +180,31 @@ class ImeOverlay(QWidget):
             return geometry_from_cursor(app)
         return self._backend.get_active_screen_geometry(app)
 
+    def _animate_fade_to(self, target: float) -> None:
+        if self._fade_anim is not None:
+            self._fade_anim.stop()
+        self._fade_anim = QPropertyAnimation(self, b"fadeOpacity", self)
+        self._fade_anim.setDuration(theme.motion_ms(theme.FADE_MS))
+        self._fade_anim.setStartValue(self._fade)
+        self._fade_anim.setEndValue(target)
+        self._fade_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._fade_anim.start()
+
+    def _animate_color_to(self, target: QColor) -> None:
+        if self._color_anim is not None:
+            self._color_anim.stop()
+        self._color_anim = QPropertyAnimation(self, b"blendColor", self)
+        self._color_anim.setDuration(theme.motion_ms(theme.STATUS_BLEND_MS))
+        self._color_anim.setStartValue(self._blend_color)
+        self._color_anim.setEndValue(QColor(target))
+        self._color_anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._color_anim.start()
+
     def _refresh_visibility(self) -> None:
-        self._gradient_visible = self._should_show_gradient()
+        show = self._should_show_gradient()
+        if show != self._gradient_visible:
+            self._gradient_visible = show
+            self._animate_fade_to(1.0 if show else 0.0)
 
     def check_state(self) -> None:
         app = QApplication.instance()
@@ -146,6 +215,7 @@ class ImeOverlay(QWidget):
         state_changed = new_state != self.is_japanese
         if state_changed:
             self.is_japanese = new_state
+            self._animate_color_to(self.color_jp if new_state else self.color_en)
 
         show, focused, hovered = self._visibility_state()
         target_geo = self._target_screen_geometry(app, focused, hovered)
@@ -157,45 +227,44 @@ class ImeOverlay(QWidget):
         visibility_changed = show != self._gradient_visible
         if visibility_changed:
             self._gradient_visible = show
+            self._animate_fade_to(1.0 if show else 0.0)
 
-        if state_changed or geo_changed or visibility_changed:
+        if state_changed or geo_changed:
             self.update()
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
-        # Translucent windows keep the previous frame unless cleared explicitly.
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
         painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
 
-        if not self._gradient_visible:
+        if self._fade <= 0.001:
             return
 
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        base_color = self.color_jp if self.is_japanese else self.color_en
-        transparent = QColor(0, 0, 0, 0)
+        base_color = QColor(self._blend_color)
+        base_color.setAlpha(int(round(base_color.alpha() * self._fade)))
 
         width = self.width()
         height = self.height()
-        thickness = self.gradient_width
+        # Keep a clean frame even when the user picks a very large width.
+        thickness = max(1, min(self.gradient_width, max(1, min(width, height) // 2)))
 
-        grad_top = QLinearGradient(0, 0, 0, thickness)
-        grad_top.setColorAt(0, base_color)
-        grad_top.setColorAt(1, transparent)
-        painter.fillRect(0, 0, width, thickness, grad_top)
+        # Full-edge strips (original reliable look). Soft multi-stop falloff
+        # keeps corners readable without radial corner blobs.
+        top = QLinearGradient(0, 0, 0, thickness)
+        _apply_stops(top, base_color)
+        painter.fillRect(0, 0, width, thickness, QBrush(top))
 
-        grad_bottom = QLinearGradient(0, height, 0, height - thickness)
-        grad_bottom.setColorAt(0, base_color)
-        grad_bottom.setColorAt(1, transparent)
-        painter.fillRect(0, height - thickness, width, thickness, grad_bottom)
+        bottom = QLinearGradient(0, height, 0, height - thickness)
+        _apply_stops(bottom, base_color)
+        painter.fillRect(0, height - thickness, width, thickness, QBrush(bottom))
 
-        grad_left = QLinearGradient(0, 0, thickness, 0)
-        grad_left.setColorAt(0, base_color)
-        grad_left.setColorAt(1, transparent)
-        painter.fillRect(0, 0, thickness, height, grad_left)
+        left = QLinearGradient(0, 0, thickness, 0)
+        _apply_stops(left, base_color)
+        painter.fillRect(0, 0, thickness, height, QBrush(left))
 
-        grad_right = QLinearGradient(width, 0, width - thickness, 0)
-        grad_right.setColorAt(0, base_color)
-        grad_right.setColorAt(1, transparent)
-        painter.fillRect(width - thickness, 0, thickness, height, grad_right)
+        right = QLinearGradient(width, 0, width - thickness, 0)
+        _apply_stops(right, base_color)
+        painter.fillRect(width - thickness, 0, thickness, height, QBrush(right))
