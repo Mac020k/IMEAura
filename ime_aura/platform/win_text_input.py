@@ -324,6 +324,11 @@ def deepest_hwnd_from_point(x: int, y: int) -> int:
     return int(parent)
 
 
+def native_edit_is_focused() -> bool:
+    """Cheap Win32 class-name check; safe to call from the UI thread."""
+    return _is_edit_class(get_focus_hwnd())
+
+
 def is_text_input_focused() -> bool:
     try:
         hwnd = get_focus_hwnd()

@@ -44,9 +44,9 @@ IMEAura/
 - **画面縁のグラデーション**: 状態に応じて画面の縁にグラデーションを描画します。
 - **マルチディスプレイ対応**: アクティブウィンドウがあるディスプレイに自動で追従します（環境により制限あり）。
 - **色のカスタマイズ**: コントロールウィンドウから、日本語入力時・英語入力時の色（透明度含む）を変更できます。色・表示モード・グラデーション幅は次回起動時も保持されます。
-- **表示モード**: グラデーションを常時表示するか、テキスト入力時のみ表示するかを選べます。テキスト入力時のみのとき、テキストボックスへのホバーでも表示するかを追加で選べます。
+- **表示モード**: グラデーションを常時表示する、テキスト入力時のみ表示する、非表示にする、から選べます。テキスト入力時のみのとき、テキストボックスへのホバーでも表示するかを追加で選べます。
 - **入力透過**: オーバーレイはクリック等を透過するため、作業の邪魔になりません。
-- **長時間・スリープ耐性 (Windows)**: IME 問い合わせにタイムアウトを設け、テキスト入力検知 (UIA/MSAA) を UI スレッド外で行うため、スリープ復帰後や応答しないアプリがあってもオーバーレイが止まりにくくなっています。
+- **長時間・スリープ耐性 (Windows)**: IME 問い合わせにタイムアウトを設け、テキスト入力検知 (UIA/MSAA) を UI スレッド外で行うため、スリープ復帰後や応答しないアプリがあってもオーバーレイが止まりにくくなっています。テキスト入力時のみ表示では、非表示中の検知間隔を短くし、状態変化をすぐにオーバーレイへ反映します。
 
 ## 動作環境
 
@@ -90,7 +90,7 @@ The control window uses a **Signal Edge** layout: one section per task, capsule 
 - **Colors**: Capsule swatches open a styled color picker, including alpha (checkerboard shows transparency). A trailing chevron, hover scale, and tooltip mark them as clickable. Restore defaults with the quiet text button; it briefly reads "戻しました".
 - **Gradient width**: The slider and pixel value sit on one row (1–100 px). Restore the default (15 px) when needed.
 - **Gradient visibility**:
-  - **Always** / **Only while typing** (mutually exclusive)
+  - **Always** / **Only while typing** / **Hidden** (mutually exclusive)
   - **Also show when hovering a text box**: slides open only when “Only while typing” is selected
 - **Text size**: Segmented Small / Medium / Large control (11 / 13 / 16 pt). The selected segment slides under the label.
 - **About…**: Shows license and third-party notices (SVG app icon).

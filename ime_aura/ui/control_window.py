@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from ime_aura.settings import (
     DEFAULT_GRADIENT_WIDTH,
     DISPLAY_MODE_ALWAYS,
+    DISPLAY_MODE_HIDDEN,
     DISPLAY_MODE_ON_FOCUS,
     GRADIENT_WIDTH_MAX,
     GRADIENT_WIDTH_MIN,
@@ -199,16 +200,19 @@ class ControlWindow(QWidget):
         display_col.setSpacing(theme.SPACE_1)
         self.radio_always = QRadioButton("常に表示")
         self.radio_on_focus = QRadioButton("テキスト入力時のみ")
+        self.radio_hidden = QRadioButton("非表示")
         self.display_group = QButtonGroup(self)
         self.display_group.addButton(self.radio_always)
         self.display_group.addButton(self.radio_on_focus)
-        display_col.addWidget(self.radio_always)
-        display_col.addWidget(self.radio_on_focus)
-
+        self.display_group.addButton(self.radio_hidden)
         self.hover_check = QCheckBox("テキストボックスへホバー時も表示")
         self.hover_reveal = RevealPanel()
         self.hover_reveal.add_widget(self.hover_check)
+
+        display_col.addWidget(self.radio_always)
+        display_col.addWidget(self.radio_on_focus)
         display_col.addWidget(self.hover_reveal)
+        display_col.addWidget(self.radio_hidden)
         root.addLayout(display_col)
         root.addWidget(SectionRule())
 
@@ -252,6 +256,8 @@ class ControlWindow(QWidget):
 
         if self.overlay.display_mode == DISPLAY_MODE_ON_FOCUS:
             self.radio_on_focus.setChecked(True)
+        elif self.overlay.display_mode == DISPLAY_MODE_HIDDEN:
+            self.radio_hidden.setChecked(True)
         else:
             self.radio_always.setChecked(True)
         self.hover_check.setChecked(self.overlay.show_on_hover)
@@ -270,6 +276,7 @@ class ControlWindow(QWidget):
 
         self.radio_always.toggled.connect(self._on_display_mode_changed)
         self.radio_on_focus.toggled.connect(self._on_display_mode_changed)
+        self.radio_hidden.toggled.connect(self._on_display_mode_changed)
         self.hover_check.toggled.connect(self._on_hover_toggled)
         self.font_segment.indexChanged.connect(self._on_font_index_changed)
         self.width_slider.valueChanged.connect(self._on_width_slider_changed)
@@ -379,16 +386,22 @@ class ControlWindow(QWidget):
         self._set_width_controls(self.overlay.gradient_width)
         self.reset_width_btn.flash_status("戻しました")
 
+    def _collapse_hover_option(self) -> None:
+        self.hover_check.blockSignals(True)
+        self.hover_check.setChecked(False)
+        self.hover_check.blockSignals(False)
+        self.hover_check.setEnabled(False)
+        self.hover_reveal.set_expanded(False)
+
     def _on_display_mode_changed(self, checked: bool) -> None:
         if not checked:
             return
         if self.radio_always.isChecked():
             self.overlay.set_display_mode(DISPLAY_MODE_ALWAYS)
-            self.hover_check.blockSignals(True)
-            self.hover_check.setChecked(False)
-            self.hover_check.blockSignals(False)
-            self.hover_check.setEnabled(False)
-            self.hover_reveal.set_expanded(False)
+            self._collapse_hover_option()
+        elif self.radio_hidden.isChecked():
+            self.overlay.set_display_mode(DISPLAY_MODE_HIDDEN)
+            self._collapse_hover_option()
         else:
             self.overlay.set_display_mode(DISPLAY_MODE_ON_FOCUS)
             self.hover_check.setEnabled(True)

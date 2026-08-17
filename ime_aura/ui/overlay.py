@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, Qt, QTimer
+from PySide6.QtCore import Property, QEasingCurve, QMetaObject, QPropertyAnimation, Qt, QTimer, Slot
 from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter
 from PySide6.QtWidgets import QApplication, QWidget
 
 from ime_aura.platform.base import PlatformBackend, geometry_from_cursor
 from ime_aura.settings import (
     DISPLAY_MODE_ALWAYS,
+    DISPLAY_MODE_HIDDEN,
     DISPLAY_MODE_ON_FOCUS,
     AppSettings,
     default_colors,
@@ -73,6 +74,8 @@ class ImeOverlay(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.check_state)
         self.timer.start(100)
+        if hasattr(self._backend, "set_text_input_changed_callback"):
+            self._backend.set_text_input_changed_callback(self._on_backend_text_input_changed)
 
     def _get_fade(self) -> float:
         return self._fade
@@ -111,6 +114,9 @@ class ImeOverlay(QWidget):
     def set_display_mode(self, mode: str) -> None:
         if mode == DISPLAY_MODE_ALWAYS:
             self.display_mode = DISPLAY_MODE_ALWAYS
+            self.show_on_hover = False
+        elif mode == DISPLAY_MODE_HIDDEN:
+            self.display_mode = DISPLAY_MODE_HIDDEN
             self.show_on_hover = False
         else:
             self.display_mode = DISPLAY_MODE_ON_FOCUS
@@ -162,6 +168,8 @@ class ImeOverlay(QWidget):
 
     def _visibility_state(self) -> tuple[bool, bool, bool]:
         """Return (should_show, is_focused, is_hovered)."""
+        if self.display_mode == DISPLAY_MODE_HIDDEN:
+            return False, False, False
         if self.display_mode == DISPLAY_MODE_ALWAYS:
             return True, False, False
         focused = self._backend.is_text_input_focused()
@@ -206,6 +214,10 @@ class ImeOverlay(QWidget):
             self._gradient_visible = show
             self._animate_fade_to(1.0 if show else 0.0)
 
+    def _on_backend_text_input_changed(self) -> None:
+        QMetaObject.invokeMethod(self, "check_state", Qt.ConnectionType.QueuedConnection)
+
+    @Slot()
     def check_state(self) -> None:
         app = QApplication.instance()
         if app is None:
