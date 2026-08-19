@@ -1,0 +1,380 @@
+#include "platform/windows/win_platform.h"
+
+#include "platform/windows/win_comp_edges.h"
+#include "platform/windows/win_ime.h"
+#include "platform/windows/win_settings_api.h"
+#include "platform/windows/win_tray.h"
+
+#include <dbt.h>
+#include <shellscalingapi.h>
+#include <shobjidl.h>
+#include <wtsapi32.h>
+
+namespace imeaura {
+namespace {
+
+constexpr wchar_t kHostClass[] = L"IMEAuraHost";
+constexpr wchar_t kAppClass[] = L"IMEAuraApp";
+constexpr UINT kPollTimerId = 1;
+constexpr UINT kPollMs = 100;
+constexpr UINT kRefreshMessage = WM_APP + 2;
+constexpr int kCmdOpenSettings = 1001;
+constexpr int kCmdQuit = 1002;
+
+WinPlatformBackend* g_self = nullptr;
+WinCompEdges g_edges;
+WinTray g_tray;
+HINSTANCE g_instance = nullptr;
+HWND g_app_hwnd = nullptr;
+
+Rect MonitorRectFromHMONITOR(HMONITOR mon) {
+  MONITORINFO mi{};
+  mi.cbSize = sizeof(mi);
+  if (!GetMonitorInfoW(mon, &mi)) return {};
+  return Rect{mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+              mi.rcMonitor.bottom - mi.rcMonitor.top};
+}
+
+HMONITOR MonitorFromWindowCenter(HWND hwnd) {
+  RECT rc{};
+  if (!GetWindowRect(hwnd, &rc)) return MonitorFromWindow(nullptr, MONITOR_DEFAULTTOPRIMARY);
+  const POINT pt{(rc.left + rc.right) / 2, (rc.top + rc.bottom) / 2};
+  return MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+}
+
+Rect ActiveMonitorRect() {
+  const HWND fg = GetForegroundWindow();
+  if (!fg) {
+    return MonitorRectFromHMONITOR(MonitorFromWindow(nullptr, MONITOR_DEFAULTTOPRIMARY));
+  }
+  return MonitorRectFromHMONITOR(MonitorFromWindowCenter(fg));
+}
+
+Rect CursorMonitorRect() {
+  POINT pt{};
+  GetCursorPos(&pt);
+  return MonitorRectFromHMONITOR(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST));
+}
+
+bool CreateEdgeHosts(HINSTANCE instance, std::array<HWND, kEdgeHostCount>& hosts) {
+  for (HWND& host : hosts) {
+    host = CreateWindowExW(
+        WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE |
+            WS_EX_TRANSPARENT,
+        kHostClass, L"", WS_POPUP, 0, 0, 1, 1, nullptr, nullptr, instance, nullptr);
+    if (!host) return false;
+    win_edge_host_set_input_passthrough(host);
+  }
+  return true;
+}
+
+void DestroyEdgeHosts(std::array<HWND, kEdgeHostCount>& hosts) {
+  for (HWND& host : hosts) {
+    if (host) {
+      DestroyWindow(host);
+      host = nullptr;
+    }
+  }
+}
+
+void ShowEdgeHosts(const std::array<HWND, kEdgeHostCount>& hosts) {
+  for (HWND host : hosts) {
+    if (host) ShowWindow(host, SW_SHOWNOACTIVATE);
+  }
+}
+
+}  // namespace
+
+WinPlatformBackend::WinPlatformBackend() = default;
+WinPlatformBackend::~WinPlatformBackend() { shutdown(); }
+
+bool WinPlatformBackend::init_probe() {
+  SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+  return true;
+}
+
+bool WinPlatformBackend::init() {
+  g_self = this;
+  load_settings(settings_);
+
+  if (!win_check_os_and_compositor()) {
+    MessageBoxW(nullptr,
+                L"IME Aura requires Windows 10 version 1803 or later with Windows.UI.Composition support.",
+                L"IME Aura", MB_ICONERROR);
+    return false;
+  }
+
+  SetCurrentProcessExplicitAppUserModelID(L"imestateviewer.app.1.0");
+  g_instance = GetModuleHandleW(nullptr);
+  SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+  WNDCLASSEXW app_wc{};
+  app_wc.cbSize = sizeof(app_wc);
+  app_wc.lpfnWndProc = WndProc;
+  app_wc.hInstance = g_instance;
+  app_wc.lpszClassName = kAppClass;
+  RegisterClassExW(&app_wc);
+  g_app_hwnd = CreateWindowExW(0, kAppClass, L"IMEAuraApp", WS_OVERLAPPED, 0, 0, 0, 0, nullptr, nullptr, g_instance,
+                               this);
+  if (!g_app_hwnd) return false;
+  ShowWindow(g_app_hwnd, SW_HIDE);
+  SetTimer(g_app_hwnd, kPollTimerId, kPollMs, nullptr);
+  WTSRegisterSessionNotification(g_app_hwnd, NOTIFY_FOR_THIS_SESSION);
+
+  win_text_input_set_changed_callback([] {
+    if (g_app_hwnd) PostMessageW(g_app_hwnd, kRefreshMessage, 0, 0);
+  });
+
+  WNDCLASSEXW host_wc{};
+  host_wc.cbSize = sizeof(host_wc);
+  host_wc.lpfnWndProc = HostWndProc;
+  host_wc.hInstance = g_instance;
+  host_wc.hbrBackground = nullptr;
+  host_wc.lpszClassName = kHostClass;
+  RegisterClassExW(&host_wc);
+
+  foreground_hook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, WinEventProc, 0, 0,
+                                     WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+  focus_hook_ = SetWinEventHook(EVENT_OBJECT_FOCUS, EVENT_OBJECT_FOCUS, nullptr, WinEventProc, 0, 0,
+                                WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+  ime_hook_ = SetWinEventHook(EVENT_OBJECT_IME_CHANGE, EVENT_OBJECT_IME_CHANGE, nullptr, WinEventProc, 0, 0,
+                              WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+
+  g_tray.create(g_instance, g_app_hwnd, [](int cmd) {
+    if (!g_self) return;
+    if (cmd == kCmdOpenSettings) g_self->show_settings_window();
+    if (cmd == kCmdQuit) PostMessageW(g_app_hwnd, WM_CLOSE, 0, 0);
+  });
+
+  if (!CreateEdgeHosts(g_instance, host_hwnds_)) return false;
+  if (!g_edges.init(host_hwnds_.data())) {
+    DestroyEdgeHosts(host_hwnds_);
+    return false;
+  }
+
+  if (!win_settings::create(g_instance, settings_, [this](const Settings& s) {
+        settings_ = s;
+        save_settings(settings_);
+        notify_settings_changed(settings_);
+        sync_text_watchers();
+        update_state();
+      })) {
+    return false;
+  }
+
+  sync_text_watchers();
+  update_state();
+  ui_started_ = true;
+  return true;
+}
+
+void WinPlatformBackend::shutdown() {
+  if (!ui_started_) return;
+  ui_started_ = false;
+  if (g_app_hwnd) {
+    KillTimer(g_app_hwnd, kPollTimerId);
+    WTSUnRegisterSessionNotification(g_app_hwnd);
+  }
+  auto unhook = [](HWINEVENTHOOK& h) {
+    if (h) {
+      UnhookWinEvent(h);
+      h = nullptr;
+    }
+  };
+  unhook(foreground_hook_);
+  unhook(focus_hook_);
+  unhook(ime_hook_);
+  g_edges.shutdown();
+  g_tray.destroy();
+  win_text_input_stop();
+  win_settings::destroy();
+  DestroyEdgeHosts(host_hwnds_);
+  if (g_app_hwnd) DestroyWindow(g_app_hwnd);
+  g_app_hwnd = nullptr;
+  g_self = nullptr;
+}
+
+int WinPlatformBackend::run() {
+  running_ = true;
+  ShowEdgeHosts(host_hwnds_);
+  win_settings::show();
+  MSG msg{};
+  while (running_ && GetMessageW(&msg, nullptr, 0, 0)) {
+    TranslateMessage(&msg);
+    DispatchMessageW(&msg);
+  }
+  return static_cast<int>(msg.wParam);
+}
+
+bool WinPlatformBackend::prefers_reduced_motion() {
+  BOOL enabled = TRUE;
+  if (SystemParametersInfoW(0x1042, 0, &enabled, 0)) return enabled == FALSE;
+  return false;
+}
+
+bool WinPlatformBackend::is_japanese_input() { return win_is_japanese_input(); }
+bool WinPlatformBackend::is_text_input_focused() { return win_text_input_focused(); }
+bool WinPlatformBackend::is_text_input_hovered() {
+  if (!settings_.show_on_hover) return false;
+  return win_text_input_hovered();
+}
+
+Rect WinPlatformBackend::get_active_monitor_rect() { return ActiveMonitorRect(); }
+Rect WinPlatformBackend::get_cursor_monitor_rect() { return CursorMonitorRect(); }
+
+void WinPlatformBackend::apply_policy(const Settings& settings, const PolicyOutput& policy) {
+  Rect mon = policy.follow == FollowTarget::Cursor ? get_cursor_monitor_rect() : get_active_monitor_rect();
+  if (!(mon == last_layout_) || last_width_ != settings.gradient_width || !(mon == last_monitor_)) {
+    g_edges.layout(mon, settings.gradient_width);
+    last_layout_ = mon;
+    last_monitor_ = mon;
+    last_width_ = settings.gradient_width;
+  }
+  g_edges.set_color(policy.target_color, policy.blend_ms);
+  g_edges.set_visible(policy.visible, policy.fade_ms);
+  last_policy_ = policy;
+}
+
+void WinPlatformBackend::show_settings_window() { win_settings::show(); }
+void WinPlatformBackend::hide_settings_window() { win_settings::hide(); }
+bool WinPlatformBackend::settings_visible() const { return win_settings::visible(); }
+
+ProbeState WinPlatformBackend::probe_state(const Settings& settings) {
+  PolicyInput in{};
+  in.ime_japanese = is_japanese_input();
+  in.text_focused = is_text_input_focused();
+  in.text_hovered = is_text_input_hovered();
+  in.reduce_motion = prefers_reduced_motion();
+  const auto policy = evaluate_policy(settings, in);
+  ProbeState st{};
+  st.ime_japanese = in.ime_japanese;
+  st.text_focused = in.text_focused;
+  st.text_hovered = in.text_hovered;
+  st.visible = policy.visible;
+  st.monitor_rect = policy.follow == FollowTarget::Cursor ? get_cursor_monitor_rect() : get_active_monitor_rect();
+  return st;
+}
+
+void WinPlatformBackend::request_refresh() { update_state(); }
+
+void WinPlatformBackend::update_state() {
+  PolicyInput in{};
+  in.ime_japanese = is_japanese_input();
+  in.text_focused = is_text_input_focused();
+  in.text_hovered = is_text_input_hovered();
+  in.reduce_motion = prefers_reduced_motion();
+  apply_policy(settings_, evaluate_policy(settings_, in));
+}
+
+void WinPlatformBackend::on_display_changed() {
+  last_monitor_ = {};
+  last_layout_ = {};
+  update_state();
+}
+
+void WinPlatformBackend::recreate_overlay() {
+  g_edges.shutdown();
+  if (g_edges.init(host_hwnds_.data())) {
+    last_layout_ = {};
+    last_monitor_ = {};
+    last_width_ = -1;
+    last_policy_ = {};
+    update_state();
+  }
+}
+
+void WinPlatformBackend::sync_text_watchers() {
+  if (settings_.display_mode == kDisplayModeOnFocus) {
+    win_text_input_start();
+  } else {
+    win_text_input_stop();
+  }
+}
+
+LRESULT CALLBACK WinPlatformBackend::HostWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+  switch (msg) {
+    case WM_NCHITTEST:
+      return HTTRANSPARENT;
+    case WM_ERASEBKGND:
+      return 1;
+    case WM_SETCURSOR:
+      return TRUE;
+    case WM_MOUSEACTIVATE:
+      return MA_NOACTIVATE;
+    case WM_ACTIVATE:
+      return 0;
+    default:
+      return DefWindowProcW(hwnd, msg, wp, lp);
+  }
+}
+
+LRESULT CALLBACK WinPlatformBackend::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+  WinPlatformBackend* self = reinterpret_cast<WinPlatformBackend*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+  if (msg == WM_NCCREATE) {
+    auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
+    self = reinterpret_cast<WinPlatformBackend*>(cs->lpCreateParams);
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+  }
+  if (!self) return DefWindowProcW(hwnd, msg, wp, lp);
+
+  switch (msg) {
+    case WM_APP + 1:
+      if (lp == WM_RBUTTONUP || lp == WM_CONTEXTMENU) {
+        HMENU menu = CreatePopupMenu();
+        AppendMenuW(menu, MF_STRING, kCmdOpenSettings, L"設定を開く");
+        AppendMenuW(menu, MF_STRING, kCmdQuit, L"終了");
+        POINT pt{};
+        GetCursorPos(&pt);
+        SetForegroundWindow(hwnd);
+        TrackPopupMenu(menu, TPM_RIGHTALIGN | TPM_BOTTOMALIGN, pt.x, pt.y, 0, hwnd, nullptr);
+        DestroyMenu(menu);
+      } else if (lp == WM_LBUTTONUP) {
+        self->show_settings_window();
+      }
+      return 0;
+    case kRefreshMessage:
+      self->update_state();
+      return 0;
+    case WM_TIMER:
+      if (wp == kPollTimerId) self->update_state();
+      return 0;
+    case WM_COMMAND:
+      if (LOWORD(wp) == kCmdOpenSettings) self->show_settings_window();
+      if (LOWORD(wp) == kCmdQuit) PostMessageW(g_app_hwnd, WM_CLOSE, 0, 0);
+      return 0;
+    case WM_DISPLAYCHANGE:
+    case WM_SETTINGCHANGE:
+    case WM_DPICHANGED:
+    case WM_DEVICECHANGE:
+      self->on_display_changed();
+      return 0;
+    case WM_POWERBROADCAST:
+      if (wp == PBT_APMRESUMEAUTOMATIC || wp == PBT_APMRESUMESUSPEND || wp == PBT_APMRESUMECRITICAL) {
+        self->recreate_overlay();
+      }
+      return TRUE;
+    case WM_WTSSESSION_CHANGE:
+      if (wp == WTS_SESSION_UNLOCK || wp == WTS_CONSOLE_CONNECT) self->recreate_overlay();
+      return 0;
+    case WM_CLOSE:
+      if (MessageBoxW(hwnd, L"IME Aura を終了しますか？\n画面縁のグラデーション表示も消えます。", L"IME Aura",
+                      MB_YESNO | MB_ICONWARNING) != IDYES) {
+        return 0;
+      }
+      self->running_ = false;
+      PostQuitMessage(0);
+      return 0;
+    case WM_DESTROY:
+      if (hwnd == g_app_hwnd) PostQuitMessage(0);
+      return 0;
+    default:
+      break;
+  }
+  return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+void CALLBACK WinPlatformBackend::WinEventProc(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD) {
+  if (g_self) g_self->update_state();
+}
+
+}  // namespace imeaura

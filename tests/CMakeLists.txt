@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.25)
+
+function(imeaura_add_test name source)
+  add_executable(${name} ${source})
+  target_link_libraries(${name} PRIVATE imeaura_core)
+  target_include_directories(${name} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+  if(MSVC)
+    set_property(TARGET ${name} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  endif()
+  add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+imeaura_add_test(policy_table_test policy_table_test.cpp)
+imeaura_add_test(settings_json_test settings_json_test.cpp)
+imeaura_add_test(overlay_layout_test overlay_layout_test.cpp)

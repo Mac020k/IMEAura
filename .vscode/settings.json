@@ -1,0 +1,13 @@
+{
+  "cmake.useCMakePresets": "always",
+  "cmake.configurePreset": "windows-msvc",
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "clangd.arguments": [
+    "--compile-commands-dir=${workspaceFolder}"
+  ],
+  "files.associations": {
+    "*.h": "cpp",
+    "*.cpp": "cpp",
+    "*.mm": "objective-cpp"
+  }
+}

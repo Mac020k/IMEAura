@@ -4,149 +4,88 @@
 
 # IME Aura
 
-IME Aura は、現在の IME 入力状態（日本語入力か英語入力か）に応じて、画面の縁にグラデーションを表示するオーバーレイツールです。Windows / macOS / Linux で動作します。入力状態を視覚的に把握しやすくすることで、入力ミスを防げます。
+IME Aura shows a subtle edge gradient on your display that reflects the current IME state (Japanese vs English input). It helps prevent typing in the wrong input mode.
 
-## プロジェクト構成
+This repository ships a **native C++20** build (no Qt).
 
-```
-IMEAura/
-├── ime_aura/
-│   ├── __main__.py          # python -m ime_aura
-│   ├── main.py              # Application entry
-│   ├── resources.py         # Resource path resolution
-│   ├── settings.py          # Persistent settings
-│   ├── platform/            # OS-specific IME / screen detection
-│   │   ├── base.py
-│   │   ├── windows.py
-│   │   ├── macos.py
-│   │   └── linux.py
-│   └── ui/
-│       ├── theme.py         # Signal Edge tokens + stylesheet (HIG-aligned)
-│       ├── widgets.py       # Squircle swatches, feedback buttons
-│       ├── icons.py         # SVG icon loading
-│       ├── overlay.py       # Edge gradient overlay
-│       ├── control_window.py
-│       └── about_dialog.py  # Version / license notices
-├── img/
-│   ├── icon.svg             # Runtime UI / window icon
-│   ├── icon.png
-│   ├── icon.ico
-│   └── icon.icns              # macOS app bundle icon
-├── requirements.txt
-├── LICENSE
-├── THIRD_PARTY_NOTICES.md   # Third-party notices
-└── README.md
-```
+## Features
 
-## 特徴
+- Real-time IME state detection (platform-native APIs)
+- Lightweight edge overlay (compositor-driven on Windows; edge windows on macOS/Linux)
+- Multi-monitor follow (active window; cursor when hover-only)
+- Custom JP/EN colors with alpha, gradient width 1–100 px
+- Display modes: Always / Only while typing / Hidden (+ optional hover)
+- Click-through overlay; settings window + tray/menu-bar icon (close settings without quitting)
 
-- **リアルタイムな状態検知**: アクティブな入力状態を取得し、日本語入力か英語入力かを判定します。
-- **画面縁のグラデーション**: 状態に応じて画面の縁にグラデーションを描画します。
-- **マルチディスプレイ対応**: アクティブウィンドウがあるディスプレイに自動で追従します（環境により制限あり）。
-- **色のカスタマイズ**: コントロールウィンドウから、日本語入力時・英語入力時の色（透明度含む）を変更できます。色・表示モード・グラデーション幅は次回起動時も保持されます。
-- **表示モード**: グラデーションを常時表示する、テキスト入力時のみ表示する、非表示にする、から選べます。テキスト入力時のみのとき、テキストボックスへのホバーでも表示するかを追加で選べます。
-- **入力透過**: オーバーレイはクリック等を透過するため、作業の邪魔になりません。
-- **長時間・スリープ耐性 (Windows)**: IME 問い合わせにタイムアウトを設け、テキスト入力検知 (UIA/MSAA) を UI スレッド外で行うため、スリープ復帰後や応答しないアプリがあってもオーバーレイが止まりにくくなっています。テキスト入力時のみ表示では、非表示中の検知間隔を短くし、状態変化をすぐにオーバーレイへ反映します。
+## Requirements
 
-## 動作環境
-
-| OS | IME 検知 | 画面追従 | テキスト入力検知 |
+| OS | Minimum | Overlay | Settings UI |
 | --- | --- | --- | --- |
-| Windows | IMM32（フォーカス窓優先・タイムアウト付き） | アクティブウィンドウ | ウィンドウクラス + UIA + MSAA |
-| macOS | Carbon Text Input Source | Quartz（失敗時はカーソル位置） | Accessibility（許可が必要な場合あり） |
-| Linux | Fcitx5 または IBus（自動検出） | X11 + `xdotool`（Wayland はカーソル位置にフォールバック） | AT-SPI（`python3-gi` + Atspi がある場合） |
+| Windows | 10 1803+ | Windows.UI.Composition (no D3D device in host) | Win32 + Direct2D / DirectWrite |
+| macOS | 11+ | 4× edge `NSWindow` + `CAGradientLayer` | AppKit |
+| Linux | Wayland compositor with `wlr-layer-shell` (X11 fallback) | 1×N shm + viewporter | GTK 4 |
 
-- Python 3.10+
-- PySide6
-- Linux では Fcitx5（`fcitx5-remote`）または IBus が必要です。どちらも無い場合は常に英語入力として表示されます。
+### Build tools
 
-## インストール
+- **CMake** 3.25+
+- **Windows**: Visual Studio 2026 (or 2022) Build Tools with **Desktop development with C++** and Windows SDK 10.0.22621+
+- **macOS**: Xcode CLT, Ninja
+- **Linux**: GCC or Clang, Ninja, `pkg-config`, dev packages: `libwayland-dev`, `wayland-protocols`, `libdbus-1-dev`, `libatspi2.0-dev`, `libgtk-4-dev`
 
-1. Python がインストールされていることを確認します。
-2. 依存ライブラリをインストールします。
-
-```bash
-pip install -r requirements.txt
-```
-
-## 使い方
-
-プロジェクトのルートディレクトリで次を実行します。
+## Build (CMake Presets)
 
 ```bash
-python -m ime_aura
+cmake --preset windows-msvc    # or macos-clang / linux-ninja
+cmake --build --preset windows-msvc
+ctest --test-dir build/windows-msvc -C Release
 ```
 
-起動すると、画面の縁にグラデーションが表示され、小さなコントロールウィンドウも開きます。
+Windows output: `build/windows-msvc/src/Release/IMEAura.exe` (static CRT, no VC++ redistributable).
 
-### Control window
+1. Install extensions from `.vscode/extensions.json` (clangd + CMake Tools). Disable Microsoft C/C++ IntelliSense if prompted.
+2. `CMake: Configure` → preset `windows-msvc`
+3. Build task **CMake: build (windows-msvc Release)** or F5 with **IMEAura (Windows)**
 
-<p align="center">
-  <img src="img/control_window.png" alt="Control Window" width="300">
-</p>
+`compile_commands.json` is copied to the repo root for clangd.
 
-The control window uses a **Signal Edge** layout: one section per task, capsule color chips (corner radius = 50% of height), and quieter secondary actions. Window chrome stays native. Padding is fixed, so buttons, chips, and row gaps stay even while heights follow the selected text size.
-
-- **Colors**: Capsule swatches open a styled color picker, including alpha (checkerboard shows transparency). A trailing chevron, hover scale, and tooltip mark them as clickable. Restore defaults with the quiet text button; it briefly reads "戻しました".
-- **Gradient width**: The slider and pixel value sit on one row (1–100 px). Restore the default (15 px) when needed.
-- **Gradient visibility**:
-  - **Always** / **Only while typing** / **Hidden** (mutually exclusive)
-  - **Also show when hovering a text box**: slides open only when “Only while typing” is selected
-- **Text size**: Segmented Small / Medium / Large control (11 / 13 / 16 pt). The selected segment slides under the label.
-- **About…**: Shows license and third-party notices (SVG app icon).
-- **Quit**: Asks for confirmation, then exits the entire application (overlay included).
-
-The panel fades in on open. Motion respects the OS "reduce motion" / "minimize animations" setting. Settings (colors, width, display mode, font size) persist across launches. The panel scrolls vertically only (no horizontal scroll).
-
-## 実行ファイルの作成
-
-PyInstaller でフォルダ形式（`--onedir`）の配布物を作成できます。LGPL ライブラリ（PySide6 / Qt）の差し替えに配慮し、単一ファイル（`--onefile`）ではなく `--onedir` を使用します。`LICENSE` と `THIRD_PARTY_NOTICES.md` も同梱されます。
-
-1. PyInstaller をインストールします。
+## Run
 
 ```bash
-pip install pyinstaller
+./build/windows-msvc/src/Release/IMEAura.exe
 ```
 
-2. プロジェクトのルートでビルドします。
+- Settings open on launch; closing the window hides it (app stays in the tray).
+- Quit from tray → **終了** (confirmation dialog).
 
-**Windows:**
+### Probe mode (no overlay)
 
 ```bash
-pyinstaller --noconsole --onedir --icon=img/icon.ico --add-data "img/icon.ico;img" --add-data "img/icon.svg;img" --add-data "LICENSE;." --add-data "THIRD_PARTY_NOTICES.md;." -n IMEAura ime_aura/__main__.py
+IMEAura.exe --probe --json
 ```
 
-**Linux:**
+## Project layout
 
-```bash
-pyinstaller --noconsole --onedir --icon=img/icon.ico --add-data "img/icon.ico:img" --add-data "img/icon.svg:img" --add-data "LICENSE:." --add-data "THIRD_PARTY_NOTICES.md:." -n IMEAura ime_aura/__main__.py
+```
+src/core/           settings.json I/O, OverlayPolicy, tokens
+src/app/            entry point, app wiring
+src/platform/       windows | macos | linux backends
+tests/              policy + settings unit tests
+docs/parity.md      functional checklist
+docs/bench.md       memory/CPU methodology
 ```
 
-**macOS:**
+## Settings file
 
-`.app` バンドルには `img/icon.icns` を指定します（実行時アイコン用の `icon.ico` は引き続き同梱します）。
+Schema is implemented in `src/core/settings.{h,cpp}`:
 
-```bash
-pyinstaller --noconsole --onedir --icon=img/icon.icns --add-data "img/icon.ico:img" --add-data "img/icon.svg:img" --add-data "LICENSE:." --add-data "THIRD_PARTY_NOTICES.md:." -n IMEAura ime_aura/__main__.py
-```
+- Windows: `%APPDATA%/IMEAura/settings.json`
+- macOS: `~/Library/Application Support/IMEAura/settings.json`
+- Linux: `$XDG_CONFIG_HOME/ime_aura/settings.json`
 
-3. 完了後、Windows / Linux は `dist/IMEAura/`、macOS は `dist/IMEAura.app` に成果物が生成されます。この一式を配布してください。
+## Releases
 
-## GitHub リリースの自動作成
+Pushes to `main` build native artifacts for Windows, Linux, and macOS via GitHub Actions.
 
-`main` ブランチへプッシュするたびに、GitHub Actions が Windows / Linux / macOS 版アプリケーションをビルドし、新しいプレリリースを作成します。リリースは `v1.0.<GitHub Actions の実行番号>` 形式の一意なタグで作成され、プッシュされたコミットを指します。
+## License
 
-各リリースの Assets には、次の zip が添付されます。
-
-| Asset | 対象 | 展開後 |
-| --- | --- | --- |
-| `IMEAura-windows-x64.zip` | Windows (x64) | フォルダ内の `IMEAura.exe` |
-| `IMEAura-linux-x64.zip` | Linux (x64) | フォルダ内の `IMEAura` |
-| `IMEAura-macos-arm64.zip` | macOS (Apple Silicon) | `IMEAura.app` |
-
-## ライセンス
-
-- **IME Aura（本プロジェクト）**: MIT License（`LICENSE` を参照）
-- **第三者ソフトウェア**: `THIRD_PARTY_NOTICES.md` を参照
-
-主な依存である PySide6 / Qt は、LGPL-3.0 / GPL-2.0 / GPL-3.0（または Qt 商用ライセンス）のもとで提供されます。アプリの「バージョン情報」からも同じ内容を確認できます。
+MIT License — see `LICENSE`.

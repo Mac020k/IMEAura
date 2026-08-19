@@ -1,7 +1,8 @@
 *.af
-*.pyc
-*.spec
 
-\build
+/build/
+build/
 dist/
-__pycache__/
+out/
+compile_commands.json
+cpp/

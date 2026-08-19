@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "IMEAura (Windows)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/windows-msvc/src/Release/IMEAura.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "CMake: build (windows-msvc Release)"
+    },
+    {
+      "name": "IMEAura Probe",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/windows-msvc/src/Release/IMEAura.exe",
+      "args": ["--probe", "--json"],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "CMake: build (windows-msvc Release)"
+    }
+  ]
+}

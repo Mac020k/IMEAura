@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,8 +13,8 @@ env:
   APP_VERSION: 1.0.0
 
 jobs:
-  build:
-    name: Build (${{ matrix.artifact_name }})
+  build-native:
+    name: Native (${{ matrix.artifact_name }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -21,58 +22,68 @@ jobs:
         include:
           - os: windows-latest
             artifact_name: IMEAura-windows-x64
-            data_sep: ";"
-            app_icon: img/icon.ico
+            preset: windows-msvc
+            config: Release
           - os: ubuntu-latest
             artifact_name: IMEAura-linux-x64
-            data_sep: ":"
-            app_icon: img/icon.ico
+            preset: linux-ninja
+            config: Release
           - os: macos-latest
             artifact_name: IMEAura-macos-arm64
-            data_sep: ":"
-            app_icon: img/icon.icns
+            preset: macos-clang
+            config: Release
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Install build dependencies
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pyinstaller
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config \
+            libwayland-dev wayland-protocols libdbus-1-dev libatspi2.0-dev libgtk-4-dev
 
-      - name: Build application
-        run: >
-          python -m PyInstaller --noconsole --onedir
-          --icon=${{ matrix.app_icon }}
-          --add-data "img/icon.ico${{ matrix.data_sep }}img"
-          --add-data "img/icon.svg${{ matrix.data_sep }}img"
-          --add-data "LICENSE${{ matrix.data_sep }}."
-          --add-data "THIRD_PARTY_NOTICES.md${{ matrix.data_sep }}."
-          --name IMEAura ime_aura/__main__.py
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }} --config ${{ matrix.config }}
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build/windows-msvc -C Release --output-on-failure
+
+      - name: Test (Linux)
+        if: runner.os == 'Linux'
+        run: ctest --test-dir build/linux-ninja --output-on-failure
+
+      - name: Test (macOS)
+        if: runner.os == 'macOS'
+        run: ctest --test-dir build/macos-clang --output-on-failure
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/IMEAura/* -DestinationPath ${{ matrix.artifact_name }}.zip
+          $bin = "build/windows-msvc/Release"
+          Copy-Item LICENSE, THIRD_PARTY_NOTICES.md, img/icon.ico -Destination $bin
+          Compress-Archive -Path "$bin/*" -DestinationPath ${{ matrix.artifact_name }}.zip
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
+          mkdir -p dist/IMEAura
+          cp build/linux-ninja/IMEAura LICENSE THIRD_PARTY_NOTICES.md img/icon.ico dist/IMEAura/
           (cd dist/IMEAura && zip -r "../../${{ matrix.artifact_name }}.zip" .)
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: |
+          mkdir -p dist/IMEAura.app/Contents/MacOS
+          cp build/macos-clang/IMEAura dist/IMEAura.app/Contents/MacOS/
+          cp LICENSE THIRD_PARTY_NOTICES.md dist/IMEAura.app/Contents/
           ditto -c -k --keepParent dist/IMEAura.app "${{ matrix.artifact_name }}.zip"
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}.zip
@@ -80,26 +91,21 @@ jobs:
 
   release:
     name: Create GitHub release
-    needs: build
+    needs: build-native
     runs-on: ubuntu-latest
     steps:
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
-      - name: Define release tag
-        id: release
-        run: |
-          echo "tag=v${APP_VERSION}.build.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+      - id: release
+        run: echo "tag=v${APP_VERSION}.build.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.tag }}
           name: IME Aura ${{ steps.release.outputs.tag }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
-          # prerelease: true
           files: artifacts/*.zip
