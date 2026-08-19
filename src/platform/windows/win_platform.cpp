@@ -1,6 +1,9 @@
 #include "platform/windows/win_platform.h"
 
+#include "core/i18n.h"
+#include "platform/firefly_backend.h"
 #include "platform/windows/win_comp_edges.h"
+#include "platform/windows/win_firefly.h"
 #include "platform/windows/win_ime.h"
 #include "platform/windows/win_settings_api.h"
 #include "platform/windows/win_tray.h"
@@ -10,22 +13,29 @@
 #include <shobjidl.h>
 #include <wtsapi32.h>
 
+#include <memory>
+
 namespace imeaura {
 namespace {
 
 constexpr wchar_t kHostClass[] = L"IMEAuraHost";
 constexpr wchar_t kAppClass[] = L"IMEAuraApp";
 constexpr UINT kPollTimerId = 1;
+constexpr UINT kCoalesceTimerId = 5;
 constexpr UINT kPollMs = 100;
+constexpr UINT kCoalesceMs = 40;
 constexpr UINT kRefreshMessage = WM_APP + 2;
 constexpr int kCmdOpenSettings = 1001;
 constexpr int kCmdQuit = 1002;
+
+constexpr UINT kFireflyToggleMsg = WM_APP + 100;
 
 WinPlatformBackend* g_self = nullptr;
 WinCompEdges g_edges;
 WinTray g_tray;
 HINSTANCE g_instance = nullptr;
 HWND g_app_hwnd = nullptr;
+std::unique_ptr<WinFireflyBackend> g_firefly;
 
 Rect MonitorRectFromHMONITOR(HMONITOR mon) {
   MONITORINFO mi{};
@@ -96,6 +106,8 @@ bool WinPlatformBackend::init_probe() {
 bool WinPlatformBackend::init() {
   g_self = this;
   load_settings(settings_);
+  refresh_reduce_motion_cache();
+  last_activity_tick_ = GetTickCount();
 
   if (!win_check_os_and_compositor()) {
     MessageBoxW(nullptr,
@@ -122,6 +134,10 @@ bool WinPlatformBackend::init() {
   WTSRegisterSessionNotification(g_app_hwnd, NOTIFY_FOR_THIS_SESSION);
 
   win_text_input_set_changed_callback([] {
+    if (g_app_hwnd) PostMessageW(g_app_hwnd, kRefreshMessage, 0, 0);
+  });
+
+  win_ime_worker_start([] {
     if (g_app_hwnd) PostMessageW(g_app_hwnd, kRefreshMessage, 0, 0);
   });
 
@@ -153,13 +169,33 @@ bool WinPlatformBackend::init() {
   }
 
   if (!win_settings::create(g_instance, settings_, [this](const Settings& s) {
+        const bool was_ff = settings_.firefly_enabled;
         settings_ = s;
         save_settings(settings_);
         notify_settings_changed(settings_);
         sync_text_watchers();
+        if (s.firefly_enabled && !was_ff) {
+          if (!g_firefly) g_firefly = std::make_unique<WinFireflyBackend>();
+          g_firefly->set_target_hwnd(g_app_hwnd);
+          g_firefly->start([this] {
+            if (g_app_hwnd) PostMessageW(g_app_hwnd, kRefreshMessage, 0, 0);
+          });
+        } else if (!s.firefly_enabled && was_ff && g_firefly) {
+          g_firefly->stop();
+          g_firefly.reset();
+        }
+        last_input_ = {};
         update_state();
       })) {
     return false;
+  }
+
+  if (settings_.firefly_enabled) {
+    g_firefly = std::make_unique<WinFireflyBackend>();
+    g_firefly->set_target_hwnd(g_app_hwnd);
+    g_firefly->start([this] {
+      if (g_app_hwnd) PostMessageW(g_app_hwnd, kRefreshMessage, 0, 0);
+    });
   }
 
   sync_text_watchers();
@@ -184,8 +220,13 @@ void WinPlatformBackend::shutdown() {
   unhook(foreground_hook_);
   unhook(focus_hook_);
   unhook(ime_hook_);
+  if (g_firefly) {
+    g_firefly->stop();
+    g_firefly.reset();
+  }
   g_edges.shutdown();
   g_tray.destroy();
+  win_ime_worker_stop();
   win_text_input_stop();
   win_settings::destroy();
   DestroyEdgeHosts(host_hwnds_);
@@ -207,12 +248,16 @@ int WinPlatformBackend::run() {
 }
 
 bool WinPlatformBackend::prefers_reduced_motion() {
-  BOOL enabled = TRUE;
-  if (SystemParametersInfoW(0x1042, 0, &enabled, 0)) return enabled == FALSE;
-  return false;
+  return reduce_motion_cached_;
 }
 
-bool WinPlatformBackend::is_japanese_input() { return win_is_japanese_input(); }
+void WinPlatformBackend::refresh_reduce_motion_cache() {
+  BOOL enabled = TRUE;
+  if (SystemParametersInfoW(0x1042, 0, &enabled, 0))
+    reduce_motion_cached_ = (enabled == FALSE);
+}
+
+bool WinPlatformBackend::is_japanese_input() { return win_ime_worker_japanese(); }
 bool WinPlatformBackend::is_text_input_focused() { return win_text_input_focused(); }
 bool WinPlatformBackend::is_text_input_hovered() {
   if (!settings_.show_on_hover) return false;
@@ -262,13 +307,17 @@ void WinPlatformBackend::update_state() {
   in.ime_japanese = is_japanese_input();
   in.text_focused = is_text_input_focused();
   in.text_hovered = is_text_input_hovered();
-  in.reduce_motion = prefers_reduced_motion();
+  in.reduce_motion = reduce_motion_cached_;
+  if (in == last_input_) return;
+  last_input_ = in;
+  last_activity_tick_ = GetTickCount();
   apply_policy(settings_, evaluate_policy(settings_, in));
 }
 
 void WinPlatformBackend::on_display_changed() {
   last_monitor_ = {};
   last_layout_ = {};
+  last_input_ = {};
   update_state();
 }
 
@@ -286,9 +335,17 @@ void WinPlatformBackend::recreate_overlay() {
 void WinPlatformBackend::sync_text_watchers() {
   if (settings_.display_mode == kDisplayModeOnFocus) {
     win_text_input_start();
+    win_text_input_set_hover_enabled(settings_.show_on_hover);
   } else {
     win_text_input_stop();
   }
+}
+
+void WinPlatformBackend::adjust_poll_interval() {
+  if (session_locked_) return;
+  const DWORD elapsed = GetTickCount() - last_activity_tick_;
+  const UINT desired = (elapsed < 2000) ? kPollMs : 500;
+  SetTimer(g_app_hwnd, kPollTimerId, desired, nullptr);
 }
 
 LRESULT CALLBACK WinPlatformBackend::HostWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -321,8 +378,9 @@ LRESULT CALLBACK WinPlatformBackend::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPA
     case WM_APP + 1:
       if (lp == WM_RBUTTONUP || lp == WM_CONTEXTMENU) {
         HMENU menu = CreatePopupMenu();
-        AppendMenuW(menu, MF_STRING, kCmdOpenSettings, L"設定を開く");
-        AppendMenuW(menu, MF_STRING, kCmdQuit, L"終了");
+        const auto l = lang_from_key(self->settings_.language);
+        AppendMenuW(menu, MF_STRING, kCmdOpenSettings, tr(l, StringId::kTrayOpen));
+        AppendMenuW(menu, MF_STRING, kCmdQuit, tr(l, StringId::kTrayQuit));
         POINT pt{};
         GetCursorPos(&pt);
         SetForegroundWindow(hwnd);
@@ -335,17 +393,30 @@ LRESULT CALLBACK WinPlatformBackend::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPA
     case kRefreshMessage:
       self->update_state();
       return 0;
+    case kFireflyToggleMsg:
+      if (g_firefly) g_firefly->handle_toggle();
+      return 0;
     case WM_TIMER:
-      if (wp == kPollTimerId) self->update_state();
+      if (wp == kPollTimerId) {
+        self->update_state();
+        self->adjust_poll_interval();
+      }
+      if (wp == kCoalesceTimerId) {
+        KillTimer(hwnd, kCoalesceTimerId);
+        self->update_state();
+      }
       return 0;
     case WM_COMMAND:
       if (LOWORD(wp) == kCmdOpenSettings) self->show_settings_window();
       if (LOWORD(wp) == kCmdQuit) PostMessageW(g_app_hwnd, WM_CLOSE, 0, 0);
       return 0;
     case WM_DISPLAYCHANGE:
-    case WM_SETTINGCHANGE:
     case WM_DPICHANGED:
     case WM_DEVICECHANGE:
+      self->on_display_changed();
+      return 0;
+    case WM_SETTINGCHANGE:
+      self->refresh_reduce_motion_cache();
       self->on_display_changed();
       return 0;
     case WM_POWERBROADCAST:
@@ -354,16 +425,26 @@ LRESULT CALLBACK WinPlatformBackend::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPA
       }
       return TRUE;
     case WM_WTSSESSION_CHANGE:
-      if (wp == WTS_SESSION_UNLOCK || wp == WTS_CONSOLE_CONNECT) self->recreate_overlay();
+      if (wp == WTS_SESSION_LOCK) {
+        self->session_locked_ = true;
+        KillTimer(hwnd, kPollTimerId);
+      }
+      if (wp == WTS_SESSION_UNLOCK || wp == WTS_CONSOLE_CONNECT) {
+        self->session_locked_ = false;
+        SetTimer(hwnd, kPollTimerId, kPollMs, nullptr);
+        self->recreate_overlay();
+      }
       return 0;
-    case WM_CLOSE:
-      if (MessageBoxW(hwnd, L"IME Aura を終了しますか？\n画面縁のグラデーション表示も消えます。", L"IME Aura",
+    case WM_CLOSE: {
+      const auto l = lang_from_key(self->settings_.language);
+      if (MessageBoxW(hwnd, tr(l, StringId::kQuitConfirmBody), tr(l, StringId::kQuitConfirmTitle),
                       MB_YESNO | MB_ICONWARNING) != IDYES) {
         return 0;
       }
       self->running_ = false;
       PostQuitMessage(0);
       return 0;
+    }
     case WM_DESTROY:
       if (hwnd == g_app_hwnd) PostQuitMessage(0);
       return 0;
@@ -374,7 +455,11 @@ LRESULT CALLBACK WinPlatformBackend::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPA
 }
 
 void CALLBACK WinPlatformBackend::WinEventProc(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD) {
-  if (g_self) g_self->update_state();
+  if (g_app_hwnd) {
+    KillTimer(g_app_hwnd, kCoalesceTimerId);
+    SetTimer(g_app_hwnd, kCoalesceTimerId, kCoalesceMs, nullptr);
+  }
+  win_ime_worker_poke();
 }
 
 }  // namespace imeaura

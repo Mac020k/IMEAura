@@ -55,6 +55,21 @@ int main() {
   loaded = normalize_settings(raw);
   EXPECT(!loaded.show_on_hover);
 
+  // Firefly fields
+  raw.firefly_enabled = true;
+  raw.firefly_led_mode = "hid";
+  raw.language = "en";
+  loaded = normalize_settings(raw);
+  EXPECT(loaded.firefly_enabled);
+  EXPECT(loaded.firefly_led_mode == "hid");
+  EXPECT(loaded.language == "en");
+
+  raw.firefly_led_mode = "invalid";
+  raw.language = "zz";
+  loaded = normalize_settings(raw);
+  EXPECT(loaded.firefly_led_mode == "auto");
+  EXPECT(loaded.language == "ja");
+
   (void)path;
   if (failures) return 1;
   std::cout << "settings_json_test: OK\n";

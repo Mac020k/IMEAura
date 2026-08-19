@@ -16,6 +16,9 @@ This repository ships a **native C++20** build (no Qt).
 - Custom JP/EN colors with alpha, gradient width 1–100 px
 - Display modes: Always / Only while typing / Hidden (+ optional hover)
 - Click-through overlay; settings window + tray/menu-bar icon (close settings without quitting)
+- **Firefly** — repurposes CapsLock as a Do Not Disturb toggle (LED on = DND active). Intercepts CapsLock at the low-level hook, drives the LED directly via HID, and controls OS notification suppression (Windows Focus Assist via CloudStore registry)
+- **Tabbed settings UI** — Aura / Firefly / General tabs with independent scroll
+- **i18n** — Japanese and English UI with instant language switching
 
 ## Requirements
 

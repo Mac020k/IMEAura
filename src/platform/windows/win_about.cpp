@@ -65,7 +65,7 @@ class AboutDialogUi {
     const int x = owner_rc.left + ((owner_rc.right - owner_rc.left) - w) / 2;
     const int y = owner_rc.top + ((owner_rc.bottom - owner_rc.top) - h) / 2;
 
-    hwnd_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST, kAboutClass, L"IME Aura について",
+    hwnd_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST, kAboutClass, L"IME Aura",
                             WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, w, h, owner, nullptr,
                             GetModuleHandleW(nullptr), this);
     if (!hwnd_) return;
@@ -105,12 +105,23 @@ class AboutDialogUi {
         measure_body();
         return 0;
       case WM_SIZE:
-      case WM_DPICHANGED:
         release_target();
         layout();
         measure_body();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
+      case WM_DPICHANGED: {
+        dpi_ = static_cast<int>(HIWORD(wp));
+        release_target();
+        const RECT* suggested = reinterpret_cast<const RECT*>(lp);
+        SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top,
+                     suggested->right - suggested->left, suggested->bottom - suggested->top,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        layout();
+        measure_body();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return 0;
+      }
       case WM_ERASEBKGND:
         return 1;
       case WM_PAINT:
@@ -120,7 +131,7 @@ class AboutDialogUi {
         scroll_by(-GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA * dip(24));
         return 0;
       case WM_LBUTTONDOWN: {
-        POINT pt{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        POINT pt{MulDiv(GET_X_LPARAM(lp), 96, dpi_), MulDiv(GET_Y_LPARAM(lp), 96, dpi_)};
         if (contains(scroll_bar_, pt.x, pt.y) && scroll_max_ > 0) {
           dragging_scroll_ = true;
           SetCapture(hwnd_);
@@ -134,7 +145,7 @@ class AboutDialogUi {
           const int track_h = scroll_bar_.bottom - scroll_bar_.top;
           const int thumb_h = std::max(dip(24), track_h * client_h_ / std::max(content_h_, 1));
           const int usable = std::max(1, track_h - thumb_h);
-          scroll_y_ = (GET_Y_LPARAM(lp) - scroll_bar_.top - thumb_h / 2) * scroll_max_ / usable;
+          scroll_y_ = (MulDiv(GET_Y_LPARAM(lp), 96, dpi_) - scroll_bar_.top - thumb_h / 2) * scroll_max_ / usable;
           scroll_y_ = std::clamp(scroll_y_, 0, scroll_max_);
           InvalidateRect(hwnd_, nullptr, FALSE);
         }
@@ -155,7 +166,16 @@ class AboutDialogUi {
     return DefWindowProcW(hwnd_, msg, wp, lp);
   }
 
-  int dip(int v) const { return MulDiv(v, dpi_, 96); }
+  int dip(int v) const { return v; }
+
+  int client_dip_w() const {
+    RECT rc{}; GetClientRect(hwnd_, &rc);
+    return MulDiv(rc.right, 96, dpi_);
+  }
+  int client_dip_h() const {
+    RECT rc{}; GetClientRect(hwnd_, &rc);
+    return MulDiv(rc.bottom, 96, dpi_);
+  }
 
   void ensure_factories() {
     dpi_ = static_cast<int>(GetDpiForWindow(hwnd_));
@@ -172,11 +192,15 @@ class AboutDialogUi {
     RECT rc{};
     GetClientRect(hwnd_, &rc);
     if (rc.right <= 0 || rc.bottom <= 0) return false;
-    return SUCCEEDED(d2d_->CreateHwndRenderTarget(
-        D2D1::RenderTargetProperties(),
-        D2D1::HwndRenderTargetProperties(hwnd_, D2D1::SizeU(static_cast<UINT>(rc.right), static_cast<UINT>(rc.bottom)),
-                                         D2D1_PRESENT_OPTIONS_NONE),
-        rt_.GetAddressOf()));
+    const float dpi_f = static_cast<float>(dpi_);
+    if (!SUCCEEDED(d2d_->CreateHwndRenderTarget(
+            D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                                         D2D1::PixelFormat(), dpi_f, dpi_f),
+            D2D1::HwndRenderTargetProperties(hwnd_, D2D1::SizeU(static_cast<UINT>(rc.right), static_cast<UINT>(rc.bottom)),
+                                             D2D1_PRESENT_OPTIONS_NONE),
+            rt_.GetAddressOf())))
+      return false;
+    return true;
   }
 
   void release_target() { rt_.Reset(); }
@@ -188,15 +212,15 @@ class AboutDialogUi {
   }
 
   void layout() {
-    RECT rc{};
-    GetClientRect(hwnd_, &rc);
-    client_w_ = rc.right;
-    client_h_ = rc.bottom;
-    const int m = dip(24);
-    header_ = box(m, m, rc.right - m * 2, dip(120));
-    body_ = box(m, header_.bottom + dip(8), rc.right - m - dip(kScrollBarWidth + 8), rc.bottom - dip(56));
-    scroll_bar_ = box(rc.right - m - dip(kScrollBarWidth), body_.top, dip(kScrollBarWidth), body_.bottom - body_.top);
-    close_ = box(m, rc.bottom - dip(44), rc.right - m * 2, dip(32));
+    const int cw = client_dip_w();
+    const int ch = client_dip_h();
+    client_w_ = cw;
+    client_h_ = ch;
+    const int m = 24;
+    header_ = box(m, m, cw - m * 2, 120);
+    body_ = box(m, header_.bottom + 8, cw - m - (kScrollBarWidth + 8), ch - 56);
+    scroll_bar_ = box(cw - m - kScrollBarWidth, body_.top, kScrollBarWidth, body_.bottom - body_.top);
+    close_ = box(m, ch - 44, cw - m * 2, 32);
   }
 
   void measure_body() {

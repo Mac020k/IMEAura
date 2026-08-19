@@ -1,5 +1,7 @@
 #include "platform/windows/win_color_dialog.h"
 
+#include "core/i18n.h"
+#include "core/settings.h"
 #include "core/tokens.h"
 
 #include <d2d1.h>
@@ -55,12 +57,15 @@ class ColorDialogUi {
 
     RECT owner_rc{};
     GetWindowRect(owner, &owner_rc);
-    const int w = 360;
-    const int h = 300;
+    const int w = 500;
+    const int h = 360;
     const int x = owner_rc.left + ((owner_rc.right - owner_rc.left) - w) / 2;
     const int y = owner_rc.top + ((owner_rc.bottom - owner_rc.top) - h) / 2;
 
-    hwnd_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST, kColorDialogClass, L"色を選択",
+    Settings tmp_s; load_settings(tmp_s);
+    lang_ = lang_from_key(tmp_s.language);
+    hwnd_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST, kColorDialogClass,
+                            tr(lang_, StringId::kColorDialogTitle),
                             WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, w, h, owner, nullptr,
                             GetModuleHandleW(nullptr), this);
     if (!hwnd_) return false;
@@ -102,11 +107,20 @@ class ColorDialogUi {
         layout();
         return 0;
       case WM_SIZE:
-      case WM_DPICHANGED:
         release_target();
         layout();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
+      case WM_DPICHANGED: {
+        dpi_ = static_cast<int>(HIWORD(wp));
+        release_target();
+        const RECT* suggested = reinterpret_cast<const RECT*>(lp);
+        SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top,
+                     suggested->right - suggested->left, suggested->bottom - suggested->top,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return 0;
+      }
       case WM_ERASEBKGND:
         return 1;
       case WM_PAINT:
@@ -137,7 +151,16 @@ class ColorDialogUi {
     return DefWindowProcW(hwnd_, msg, wp, lp);
   }
 
-  int dip(int v) const { return MulDiv(v, dpi_, 96); }
+  int dip(int v) const { return v; }
+
+  int client_dip_w() const {
+    RECT rc{}; GetClientRect(hwnd_, &rc);
+    return MulDiv(rc.right, 96, dpi_);
+  }
+  int client_dip_h() const {
+    RECT rc{}; GetClientRect(hwnd_, &rc);
+    return MulDiv(rc.bottom, 96, dpi_);
+  }
 
   void ensure_factories() {
     dpi_ = static_cast<int>(GetDpiForWindow(hwnd_));
@@ -154,11 +177,15 @@ class ColorDialogUi {
     RECT rc{};
     GetClientRect(hwnd_, &rc);
     if (rc.right <= 0 || rc.bottom <= 0) return false;
-    return SUCCEEDED(d2d_->CreateHwndRenderTarget(
-        D2D1::RenderTargetProperties(),
-        D2D1::HwndRenderTargetProperties(hwnd_, D2D1::SizeU(static_cast<UINT>(rc.right), static_cast<UINT>(rc.bottom)),
-                                         D2D1_PRESENT_OPTIONS_NONE),
-        rt_.GetAddressOf()));
+    const float dpi_f = static_cast<float>(dpi_);
+    if (!SUCCEEDED(d2d_->CreateHwndRenderTarget(
+            D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                                         D2D1::PixelFormat(), dpi_f, dpi_f),
+            D2D1::HwndRenderTargetProperties(hwnd_, D2D1::SizeU(static_cast<UINT>(rc.right), static_cast<UINT>(rc.bottom)),
+                                             D2D1_PRESENT_OPTIONS_NONE),
+            rt_.GetAddressOf())))
+      return false;
+    return true;
   }
 
   void release_target() { rt_.Reset(); }
@@ -166,25 +193,24 @@ class ColorDialogUi {
   RECT box(int x, int y, int w, int h) const { return RECT{x, y, x + w, y + h}; }
 
   void layout() {
-    RECT rc{};
-    GetClientRect(hwnd_, &rc);
-    const int m = dip(16);
-    const int row = dip(26);
-    const int row_gap = dip(6);
+    const int cw = client_dip_w();
+    const int m = 16;
+    const int row = 26;
+    const int row_gap = 6;
     int y = m;
-    preview_ = box(m, y, rc.right - m * 2, dip(44));
-    y += dip(44) + dip(12);
-    slider_r_ = box(m, y, rc.right - m * 2, row);
+    preview_ = box(m, y, cw - m * 2, 44);
+    y += 44 + 12;
+    slider_r_ = box(m, y, cw - m * 2, row);
     y += row + row_gap;
-    slider_g_ = box(m, y, rc.right - m * 2, row);
+    slider_g_ = box(m, y, cw - m * 2, row);
     y += row + row_gap;
-    slider_b_ = box(m, y, rc.right - m * 2, row);
+    slider_b_ = box(m, y, cw - m * 2, row);
     y += row + row_gap;
-    slider_a_ = box(m, y, rc.right - m * 2, row);
-    y += row + dip(12);
-    const int btn_w = (rc.right - m * 2 - dip(8)) / 2;
+    slider_a_ = box(m, y, cw - m * 2, row);
+    y += row + 12;
+    const int btn_w = (cw - m * 2 - 8) / 2;
     ok_ = box(m, y, btn_w, row);
-    cancel_ = box(m + btn_w + dip(8), y, btn_w, row);
+    cancel_ = box(m + btn_w + 8, y, btn_w, row);
   }
 
   bool contains(const RECT& r, int x, int y) const {
@@ -230,7 +256,9 @@ class ColorDialogUi {
     InvalidateRect(hwnd_, nullptr, FALSE);
   }
 
-  void on_mouse(int x, int y, bool down, bool click) {
+  void on_mouse(int px, int py, bool down, bool click) {
+    const int x = MulDiv(px, 96, dpi_);
+    const int y = MulDiv(py, 96, dpi_);
     hover_ = hit_test(x, y);
     if (dragging_ != ColorHit::None && down) {
       set_channel_from_x(dragging_, x);
@@ -262,7 +290,7 @@ class ColorDialogUi {
   ComPtr<IDWriteTextFormat> make_slider_text_format(DWRITE_TEXT_ALIGNMENT align) {
     ComPtr<IDWriteTextFormat> fmt;
     dwrite_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-                              DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(dip(12)), L"en-us",
+                              DWRITE_FONT_STRETCH_NORMAL, 12.f, L"en-us",
                               fmt.GetAddressOf());
     fmt->SetTextAlignment(align);
     fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -351,8 +379,8 @@ class ColorDialogUi {
     paint_slider(slider_b_, L"B", color_.b, D2D1::ColorF(0.18f, 0.51f, 0.99f, 1.f));
     paint_slider(slider_a_, L"A", color_.a, UiColor(kUiTextSecondary));
 
-    paint_button(ok_, L"OK", true);
-    paint_button(cancel_, L"キャンセル", false);
+    paint_button(ok_, tr(lang_, StringId::kOk), true);
+    paint_button(cancel_, tr(lang_, StringId::kCancel), false);
 
     const HRESULT hr = rt_->EndDraw();
     if (hr == D2DERR_RECREATE_TARGET) release_target();
@@ -362,6 +390,7 @@ class ColorDialogUi {
   HWND owner_ = nullptr;
   HWND hwnd_ = nullptr;
   Rgba color_{};
+  Lang lang_ = Lang::Ja;
   bool accepted_ = false;
   bool done_ = false;
   int dpi_ = 96;

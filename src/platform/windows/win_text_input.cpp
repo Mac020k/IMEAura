@@ -155,6 +155,7 @@ class UiaSession {
 std::atomic<bool> g_focused{false};
 std::atomic<bool> g_hovered{false};
 std::atomic<bool> g_stop{true};
+std::atomic<bool> g_hover_enabled{true};
 std::thread g_worker;
 std::mutex g_worker_mutex;
 std::atomic<bool> g_worker_join_in_progress{false};
@@ -177,9 +178,9 @@ void WorkerLoop() {
   UiaSession uia;
   bool prev_focused = false;
   bool prev_hovered = false;
+  POINT prev_cursor{-1, -1};
   while (!g_stop.load(std::memory_order_relaxed)) {
     bool focused = win_native_edit_is_focused();
-    bool hovered = win_native_edit_is_hovered();
     if (!focused) {
       try {
         focused = uia.focused_is_text();
@@ -187,22 +188,31 @@ void WorkerLoop() {
         focused = false;
       }
     }
-    if (!hovered) {
+
+    bool hovered = false;
+    if (g_hover_enabled.load(std::memory_order_relaxed)) {
       POINT pt{};
-      if (GetCursorPos(&pt)) {
-        try {
-          hovered = uia.point_is_text(pt);
-        } catch (...) {
-          hovered = false;
+      if (GetCursorPos(&pt) && (pt.x != prev_cursor.x || pt.y != prev_cursor.y)) {
+        prev_cursor = pt;
+        hovered = win_native_edit_is_hovered();
+        if (!hovered) {
+          try {
+            hovered = uia.point_is_text(pt);
+          } catch (...) {
+            hovered = false;
+          }
         }
+      } else {
+        hovered = g_hovered.load(std::memory_order_relaxed);
       }
     }
+
     g_focused.store(focused, std::memory_order_relaxed);
     g_hovered.store(hovered, std::memory_order_relaxed);
     EmitChangedIfNeeded(prev_focused, focused, prev_hovered, hovered);
     prev_focused = focused;
     prev_hovered = hovered;
-    Sleep((focused || hovered) ? 250 : 50);
+    Sleep((focused || hovered) ? 120 : 400);
   }
   uia.reset();
   CoUninitialize();
@@ -262,6 +272,11 @@ bool win_text_input_hovered() {
 void win_text_input_set_changed_callback(std::function<void()> cb) {
   std::lock_guard lock(g_callback_mutex);
   g_changed_callback = std::move(cb);
+}
+
+void win_text_input_set_hover_enabled(bool enabled) {
+  g_hover_enabled.store(enabled, std::memory_order_relaxed);
+  if (!enabled) g_hovered.store(false, std::memory_order_relaxed);
 }
 
 }  // namespace imeaura

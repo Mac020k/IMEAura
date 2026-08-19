@@ -23,6 +23,12 @@ struct PolicyInput {
   bool text_focused = false;
   bool text_hovered = false;
   bool reduce_motion = false;
+
+  bool operator==(const PolicyInput& o) const {
+    return ime_japanese == o.ime_japanese && text_focused == o.text_focused &&
+           text_hovered == o.text_hovered && reduce_motion == o.reduce_motion;
+  }
+  bool operator!=(const PolicyInput& o) const { return !(*this == o); }
 };
 
 struct PolicyOutput {

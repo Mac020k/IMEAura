@@ -49,6 +49,8 @@ class WinPlatformBackend : public PlatformBackend {
   void on_display_changed();
   void recreate_overlay();
   void sync_text_watchers();
+  void refresh_reduce_motion_cache();
+  void adjust_poll_interval();
 
   Settings settings_{};
   std::array<HWND, kEdgeHostCount> host_hwnds_{};
@@ -57,10 +59,14 @@ class WinPlatformBackend : public PlatformBackend {
   HWINEVENTHOOK ime_hook_ = nullptr;
   bool running_ = false;
   bool ui_started_ = false;
+  bool session_locked_ = false;
   PolicyOutput last_policy_{};
+  PolicyInput last_input_{};
   Rect last_monitor_{};
   Rect last_layout_{};
   int last_width_ = -1;
+  DWORD last_activity_tick_ = 0;
+  bool reduce_motion_cached_ = false;
 };
 
 }  // namespace imeaura

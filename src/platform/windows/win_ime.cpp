@@ -3,9 +3,13 @@
 #include <imm.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cwctype>
+#include <functional>
+#include <mutex>
 #include <string>
+#include <thread>
 
 namespace imeaura {
 namespace {
@@ -92,6 +96,62 @@ bool win_native_edit_is_hovered() {
   HWND hwnd = WindowFromPoint(pt);
   if (!hwnd) return false;
   return ClassLooksLikeEdit(ClassNameLower(hwnd));
+}
+
+namespace {
+
+std::atomic<bool> g_ime_japanese{false};
+std::atomic<bool> g_ime_stop{true};
+HANDLE g_ime_wake_event = nullptr;
+std::thread g_ime_thread;
+std::mutex g_ime_mutex;
+std::mutex g_ime_cb_mutex;
+std::function<void()> g_ime_change_cb;
+
+void ImeWorkerLoop() {
+  bool prev = false;
+  while (!g_ime_stop.load(std::memory_order_relaxed)) {
+    const bool jp = win_is_japanese_input();
+    g_ime_japanese.store(jp, std::memory_order_relaxed);
+    if (jp != prev) {
+      prev = jp;
+      std::function<void()> cb;
+      {
+        std::lock_guard lk(g_ime_cb_mutex);
+        cb = g_ime_change_cb;
+      }
+      if (cb) cb();
+    }
+    WaitForSingleObject(g_ime_wake_event, 80);
+  }
+}
+
+}  // namespace
+
+void win_ime_worker_start(std::function<void()> on_change) {
+  std::lock_guard lk(g_ime_mutex);
+  {
+    std::lock_guard lk2(g_ime_cb_mutex);
+    g_ime_change_cb = std::move(on_change);
+  }
+  if (!g_ime_stop.exchange(false)) return;
+  if (!g_ime_wake_event) g_ime_wake_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+  g_ime_thread = std::thread(ImeWorkerLoop);
+}
+
+void win_ime_worker_stop() {
+  std::lock_guard lk(g_ime_mutex);
+  if (g_ime_stop.exchange(true)) return;
+  if (g_ime_wake_event) SetEvent(g_ime_wake_event);
+  if (g_ime_thread.joinable()) g_ime_thread.join();
+}
+
+bool win_ime_worker_japanese() {
+  return g_ime_japanese.load(std::memory_order_relaxed);
+}
+
+void win_ime_worker_poke() {
+  if (g_ime_wake_event) SetEvent(g_ime_wake_event);
 }
 
 }  // namespace imeaura

@@ -1,8 +1,12 @@
 #include "platform/windows/win_settings_api.h"
 
+#include "core/firefly.h"
+#include "core/i18n.h"
 #include "core/tokens.h"
+#include "platform/firefly_backend.h"
 #include "platform/windows/win_about.h"
 #include "platform/windows/win_color_dialog.h"
+#include "platform/windows/win_firefly.h"
 #include "platform/windows/win_icon.h"
 
 #include <d2d1.h>
@@ -30,8 +34,22 @@ constexpr UINT kRevealTimerId = 3;
 constexpr UINT kFlashTimerId = 4;
 constexpr UINT kEntranceFrameMs = 16;
 
+constexpr UINT kSaveTimerId = 6;
+constexpr UINT kSaveDebounceMs = 400;
+constexpr UINT kSegmentTimerId = 7;
+constexpr UINT kSegmentFrameMs = 16;
+constexpr float kSegmentAnimDurationMs = 200.f;
+constexpr UINT kTabAnimTimerId = 8;
+constexpr UINT kTabAnimFrameMs = 16;
+constexpr float kTabAnimDurationMs = 200.f;
+
+enum class Tab { Aura, Firefly, General };
+
 enum class Hit : int {
   None = 0,
+  TabAura,
+  TabFirefly,
+  TabGeneral,
   JpSwatch,
   EnSwatch,
   ResetColors,
@@ -45,10 +63,15 @@ enum class Hit : int {
   FontSmall,
   FontMedium,
   FontLarge,
+  LangJa,
+  LangEn,
+  FireflyToggle,
   About,
   Quit,
   ScrollBar,
 };
+
+bool g_firefly_active = false;
 
 enum class AlignH { Left, Center };
 enum class AlignV { Top, Center };
@@ -101,15 +124,18 @@ class SettingsUi {
     wc.style = CS_DBLCLKS;
     RegisterClassExW(&wc);
 
-    const int w = MulDiv(kUiMinWindowW, 96, 96);
-    const int h = MulDiv(640, 96, 96);
+    constexpr DWORD kWndStyle = WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX;
+    const int sys_dpi = static_cast<int>(GetDpiForSystem());
+    const int scaled_w = MulDiv(kUiMinWindowW, sys_dpi, 96);
+    const int scaled_h = MulDiv(300, sys_dpi, 96);
+    RECT desired{0, 0, scaled_w, scaled_h};
+    AdjustWindowRectExForDpi(&desired, kWndStyle, FALSE, 0, static_cast<UINT>(sys_dpi));
+    const int w = desired.right - desired.left;
+    const int h = desired.bottom - desired.top;
     hwnd_ = CreateWindowExW(0, kSettingsClass, L"IME Aura",
-                            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT, w,
+                            kWndStyle, CW_USEDEFAULT, CW_USEDEFAULT, w,
                             h, nullptr, nullptr, instance, this);
     if (!hwnd_) return false;
-
-    LONG_PTR style = GetWindowLongPtrW(hwnd_, GWL_STYLE);
-    SetWindowLongPtrW(hwnd_, GWL_STYLE, style & ~WS_MAXIMIZEBOX);
     DWORD corner = kDwmCornerRound;
     DwmSetWindowAttribute(hwnd_, kDwmWindowCornerPreference, &corner, sizeof(corner));
     win_set_window_icons(hwnd_);
@@ -167,6 +193,16 @@ class SettingsUi {
 
  private:
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_GETMINMAXINFO) {
+      auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
+      int min_dpi = static_cast<int>(GetDpiForWindow(hwnd));
+      if (min_dpi == 0) min_dpi = static_cast<int>(GetDpiForSystem());
+      RECT min_rc{0, 0, MulDiv(kUiMinWindowW, min_dpi, 96), MulDiv(kUiMinWindowH, min_dpi, 96)};
+      AdjustWindowRectExForDpi(&min_rc, WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX, FALSE, 0, static_cast<UINT>(min_dpi));
+      mmi->ptMinTrackSize.x = min_rc.right - min_rc.left;
+      mmi->ptMinTrackSize.y = min_rc.bottom - min_rc.top;
+      return 0;
+    }
     SettingsUi* self = reinterpret_cast<SettingsUi*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     if (msg == WM_NCCREATE) {
       auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
@@ -189,10 +225,19 @@ class SettingsUi {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
       case WM_DISPLAYCHANGE:
-      case WM_DPICHANGED:
         release_target();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
+      case WM_DPICHANGED: {
+        dpi_ = static_cast<int>(HIWORD(wp));
+        release_target();
+        const RECT* suggested = reinterpret_cast<const RECT*>(lp);
+        SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top,
+                     suggested->right - suggested->left, suggested->bottom - suggested->top,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return 0;
+      }
       case WM_ERASEBKGND:
         return 1;
       case WM_PAINT:
@@ -244,13 +289,19 @@ class SettingsUi {
           KillTimer(hwnd_, kFlashTimerId);
           InvalidateRect(hwnd_, nullptr, FALSE);
         }
+        if (wp == kSaveTimerId) {
+          save_pending_ = false;
+          KillTimer(hwnd_, kSaveTimerId);
+        }
+        if (wp == kSegmentTimerId) tick_segment();
+        if (wp == kTabAnimTimerId) tick_tab_anim();
         return 0;
       case WM_SETCURSOR:
         if (LOWORD(lp) == HTCLIENT) {
           POINT pt{};
           GetCursorPos(&pt);
           ScreenToClient(hwnd_, &pt);
-          const Hit h = hit_test(pt.x, pt.y);
+          const Hit h = hit_test(MulDiv(pt.x, 96, dpi_), MulDiv(pt.y, 96, dpi_));
           SetCursor(LoadCursorW(nullptr, h == Hit::None ? IDC_ARROW : IDC_HAND));
           return TRUE;
         }
@@ -267,13 +318,14 @@ class SettingsUi {
     return DefWindowProcW(hwnd_, msg, wp, lp);
   }
 
-  int dip(int v) const { return MulDiv(v, dpi_, 96); }
+  int dip(int v) const { return v; }
 
   int content_width() const {
     RECT rc{};
     GetClientRect(hwnd_, &rc);
+    const int w = MulDiv(rc.right, 96, dpi_);
     const int gutter = scroll_max_ > 0 ? dip(kUiScrollBarGutter) : 0;
-    return std::max(0, static_cast<int>(rc.right) - dip(kUiMargin) * 2 - gutter);
+    return std::max(0, w - dip(kUiMargin) * 2 - gutter);
   }
 
   void ensure_factories() {
@@ -291,18 +343,22 @@ class SettingsUi {
     RECT rc{};
     GetClientRect(hwnd_, &rc);
     if (rc.right <= 0 || rc.bottom <= 0) return false;
-    return SUCCEEDED(d2d_->CreateHwndRenderTarget(
-        D2D1::RenderTargetProperties(),
-        D2D1::HwndRenderTargetProperties(hwnd_, D2D1::SizeU(static_cast<UINT>(rc.right), static_cast<UINT>(rc.bottom)),
-                                         D2D1_PRESENT_OPTIONS_NONE),
-        rt_.GetAddressOf()));
+    const float dpi_f = static_cast<float>(dpi_);
+    if (!SUCCEEDED(d2d_->CreateHwndRenderTarget(
+            D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                                         D2D1::PixelFormat(), dpi_f, dpi_f),
+            D2D1::HwndRenderTargetProperties(hwnd_, D2D1::SizeU(static_cast<UINT>(rc.right), static_cast<UINT>(rc.bottom)),
+                                             D2D1_PRESENT_OPTIONS_NONE),
+            rt_.GetAddressOf())))
+      return false;
+    return true;
   }
 
   void release_target() { rt_.Reset(); }
 
   ComPtr<IDWriteTextFormat> make_format(int pt, DWRITE_FONT_WEIGHT weight) {
     ComPtr<IDWriteTextFormat> fmt;
-    const float px = static_cast<float>(MulDiv(pt, dpi_, 72));
+    const float px = static_cast<float>(MulDiv(pt, 96, 72));
     dwrite_->CreateTextFormat(L"Yu Gothic UI", nullptr, weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                               px, L"ja-jp", fmt.GetAddressOf());
     if (!fmt) {
@@ -385,10 +441,17 @@ class SettingsUi {
     rt->FillRoundedRectangle(RoundRect(r, radius), brush.Get());
   }
 
+  int client_dip_w() const {
+    RECT rc{}; GetClientRect(hwnd_, &rc);
+    return MulDiv(rc.right, 96, dpi_);
+  }
+  int client_dip_h() const {
+    RECT rc{}; GetClientRect(hwnd_, &rc);
+    return MulDiv(rc.bottom, 96, dpi_);
+  }
+
   void clamp_scroll() {
-    RECT rc{};
-    GetClientRect(hwnd_, &rc);
-    client_height_ = rc.bottom;
+    client_height_ = client_dip_h() - dip(kUiTabBarHeight);
     scroll_max_ = std::max(0, content_height_ - client_height_);
     scroll_y_ = std::clamp(scroll_y_, 0, scroll_max_);
   }
@@ -426,6 +489,69 @@ class SettingsUi {
     if (t >= 1.f) KillTimer(hwnd_, kRevealTimerId);
   }
 
+  RECT active_tab_rect() const {
+    if (active_tab_ == Tab::Firefly) return tab_firefly_;
+    if (active_tab_ == Tab::General) return tab_general_;
+    return tab_aura_;
+  }
+
+  void start_tab_anim(const RECT& from, const RECT& to) {
+    const int pad = dip(kUiTabPadX);
+    if (prefers_reduced_motion()) {
+      tab_anim_t_ = 1.f;
+      InvalidateRect(hwnd_, nullptr, FALSE);
+      return;
+    }
+    tab_from_left_ = static_cast<float>(from.left + pad);
+    tab_from_right_ = static_cast<float>(from.right - pad);
+    tab_to_left_ = static_cast<float>(to.left + pad);
+    tab_to_right_ = static_cast<float>(to.right - pad);
+    tab_anim_t_ = 0.f;
+    tab_anim_start_ = std::chrono::steady_clock::now();
+    SetTimer(hwnd_, kTabAnimTimerId, kTabAnimFrameMs, nullptr);
+  }
+
+  void tick_tab_anim() {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - tab_anim_start_)
+                             .count();
+    const float t = std::clamp(static_cast<float>(elapsed) / kTabAnimDurationMs, 0.f, 1.f);
+    tab_anim_t_ = ease_out_cubic(t);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    if (t >= 1.f) KillTimer(hwnd_, kTabAnimTimerId);
+  }
+
+  RECT selected_font_rect() const {
+    if (settings_.ui_font_size == kFontSizeLarge) return font_large_;
+    if (settings_.ui_font_size == kFontSizeMedium) return font_medium_;
+    return font_small_;
+  }
+
+  void start_segment_anim(const RECT& from, const RECT& to) {
+    if (prefers_reduced_motion()) {
+      seg_anim_t_ = 1.f;
+      InvalidateRect(hwnd_, nullptr, FALSE);
+      return;
+    }
+    seg_from_left_ = static_cast<float>(from.left);
+    seg_from_right_ = static_cast<float>(from.right);
+    seg_to_left_ = static_cast<float>(to.left);
+    seg_to_right_ = static_cast<float>(to.right);
+    seg_anim_t_ = 0.f;
+    seg_anim_start_ = std::chrono::steady_clock::now();
+    SetTimer(hwnd_, kSegmentTimerId, kSegmentFrameMs, nullptr);
+  }
+
+  void tick_segment() {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - seg_anim_start_)
+                             .count();
+    const float t = std::clamp(static_cast<float>(elapsed) / kSegmentAnimDurationMs, 0.f, 1.f);
+    seg_anim_t_ = ease_out_cubic(t);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    if (t >= 1.f) KillTimer(hwnd_, kSegmentTimerId);
+  }
+
   void flash_reset(bool colors) {
     if (colors)
       reset_colors_flash_ = true;
@@ -442,8 +568,8 @@ class SettingsUi {
       EndPaint(hwnd_, &ps);
       return;
     }
-    RECT crc{};
-    GetClientRect(hwnd_, &crc);
+    const int cw = client_dip_w();
+    const int ch = client_dip_h();
     const int body = ui_font_point_size(settings_.ui_font_size);
     auto title_fmt = make_format(body + 2, DWRITE_FONT_WEIGHT_SEMI_BOLD);
     auto body_fmt = make_format(body, DWRITE_FONT_WEIGHT_NORMAL);
@@ -455,8 +581,8 @@ class SettingsUi {
     clamp_scroll();
 
     rt_->BeginDraw();
-    const float w = static_cast<float>(crc.right);
-    const float h = static_cast<float>(crc.bottom);
+    const float w = static_cast<float>(cw);
+    const float h = static_cast<float>(ch);
     rt_->Clear(C(kUiBg));
 
     ComPtr<ID2D1LinearGradientBrush> wash;
@@ -472,23 +598,73 @@ class SettingsUi {
       if (wash) rt_->FillRectangle(D2D1::RectF(0, 0, w, h), wash.Get());
     }
 
-    rt_->PushAxisAlignedClip(D2D1::RectF(0, 0, w, h), D2D1_ANTIALIAS_MODE_ALIASED);
-    rt_->SetTransform(D2D1::Matrix3x2F::Translation(0, -static_cast<float>(scroll_y_)));
+    // Tab bar
+    const int tab_h = dip(kUiTabBarHeight);
+    {
+      const float tab_y = static_cast<float>(tab_h);
+      ComPtr<ID2D1SolidColorBrush> sep;
+      rt_->CreateSolidColorBrush(C(kUiSeparator), sep.GetAddressOf());
+      if (sep) rt_->DrawLine(D2D1::Point2F(0, tab_y), D2D1::Point2F(w, tab_y), sep.Get(), 1.f);
 
-    draw_text(rt_.Get(), title_fmt.Get(), L"色", r2f(sec_color_title_), C(kUiText));
-    draw_text(rt_.Get(), sub_fmt.Get(), L"クリックして画面縁の色を変更します", r2f(sec_color_sub_),
+      const wchar_t* tab_labels[] = {
+        tr(lang(), StringId::kTabAura),
+        tr(lang(), StringId::kTabFirefly),
+        tr(lang(), StringId::kTabGeneral)
+      };
+      const RECT* tab_rects[] = { &tab_aura_, &tab_firefly_, &tab_general_ };
+      const Tab tabs[] = { Tab::Aura, Tab::Firefly, Tab::General };
+      const int tab_w = static_cast<int>(w) / 3;
+      for (int i = 0; i < 3; ++i) {
+        const_cast<RECT*>(tab_rects[i])->left = tab_w * i;
+        const_cast<RECT*>(tab_rects[i])->right = (i == 2) ? static_cast<int>(w) : tab_w * (i + 1);
+        const_cast<RECT*>(tab_rects[i])->top = 0;
+        const_cast<RECT*>(tab_rects[i])->bottom = tab_h;
+        const bool active = (active_tab_ == tabs[i]);
+        draw_text(rt_.Get(), body_fmt.Get(), tab_labels[i], r2f(*tab_rects[i]),
+                  active ? C(kUiTabActive) : C(kUiTextSecondary), AlignH::Center, AlignV::Center);
+        (void)active;
+      }
+      {
+        const float ind_y = tab_y - static_cast<float>(dip(kUiTabIndicatorH));
+        ComPtr<ID2D1SolidColorBrush> ind;
+        rt_->CreateSolidColorBrush(C(kUiTabActive), ind.GetAddressOf());
+        if (ind) {
+          const RECT ar = active_tab_rect();
+          const int pad = dip(kUiTabPadX);
+          float il, ir;
+          if (tab_anim_t_ >= 1.f) {
+            il = static_cast<float>(ar.left + pad);
+            ir = static_cast<float>(ar.right - pad);
+          } else {
+            auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
+            il = lerp(tab_from_left_, tab_to_left_, tab_anim_t_);
+            ir = lerp(tab_from_right_, tab_to_right_, tab_anim_t_);
+          }
+          rt_->FillRectangle(D2D1::RectF(il, ind_y, ir, tab_y), ind.Get());
+        }
+      }
+    }
+
+    rt_->PushAxisAlignedClip(D2D1::RectF(0, static_cast<float>(tab_h), w, h), D2D1_ANTIALIAS_MODE_ALIASED);
+    rt_->SetTransform(D2D1::Matrix3x2F::Translation(0, static_cast<float>(tab_h) - static_cast<float>(scroll_y_)));
+
+    if (active_tab_ == Tab::Aura) {
+
+    draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kColorSection), r2f(sec_color_title_), C(kUiText));
+    draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kColorSub), r2f(sec_color_sub_),
               C(kUiTextSecondary));
-    draw_text(rt_.Get(), body_fmt.Get(), L"日本語", r2f(jp_label_), C(kUiText), AlignH::Left, AlignV::Center);
-    draw_text(rt_.Get(), body_fmt.Get(), L"英語", r2f(en_label_), C(kUiText), AlignH::Left, AlignV::Center);
+    draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kColorJp), r2f(jp_label_), C(kUiText), AlignH::Left, AlignV::Center);
+    draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kColorEn), r2f(en_label_), C(kUiText), AlignH::Left, AlignV::Center);
     paint_swatch(jp_swatch_, settings_.color_jp, hover_ == Hit::JpSwatch);
     paint_swatch(en_swatch_, settings_.color_en, hover_ == Hit::EnSwatch);
-    draw_text(rt_.Get(), body_fmt.Get(), reset_colors_flash_ ? L"戻しました" : L"デフォルトの色に戻す",
+    draw_text(rt_.Get(), body_fmt.Get(),
+              reset_colors_flash_ ? tr(lang(), StringId::kColorResetDone) : tr(lang(), StringId::kColorReset),
               r2f(reset_colors_), hover_ == Hit::ResetColors ? C(kDefaultColorEn) : C(kUiTextSecondary), AlignH::Left,
               AlignV::Center);
     paint_rule(rule1_);
 
-    draw_text(rt_.Get(), title_fmt.Get(), L"グラデーションの幅", r2f(sec_width_title_), C(kUiText));
-    draw_text(rt_.Get(), sub_fmt.Get(), L"画面縁の帯の厚さ (1-100 px)", r2f(sec_width_sub_), C(kUiTextSecondary));
+    draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kWidthSection), r2f(sec_width_title_), C(kUiText));
+    draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kWidthSub), r2f(sec_width_sub_), C(kUiTextSecondary));
     paint_slider();
     wchar_t pxbuf[32];
     if (width_editing_) {
@@ -498,31 +674,100 @@ class SettingsUi {
     }
     fill_round(rt_.Get(), r2f(width_value_), dip(8), width_editing_ ? C(kUiFillHover) : C(kUiFill));
     draw_text(rt_.Get(), body_fmt.Get(), pxbuf, r2f(width_value_), C(kUiText), AlignH::Center, AlignV::Center);
-    draw_text(rt_.Get(), body_fmt.Get(), reset_width_flash_ ? L"戻しました" : L"デフォルトの幅に戻す", r2f(reset_width_),
-              hover_ == Hit::ResetWidth ? C(kDefaultColorEn) : C(kUiTextSecondary), AlignH::Left, AlignV::Center);
+    draw_text(rt_.Get(), body_fmt.Get(),
+              reset_width_flash_ ? tr(lang(), StringId::kWidthResetDone) : tr(lang(), StringId::kWidthReset),
+              r2f(reset_width_), hover_ == Hit::ResetWidth ? C(kDefaultColorEn) : C(kUiTextSecondary), AlignH::Left, AlignV::Center);
     paint_rule(rule2_);
 
-    draw_text(rt_.Get(), title_fmt.Get(), L"グラデーション表示", r2f(sec_disp_title_), C(kUiText));
-    paint_radio(mode_always_, settings_.display_mode == kDisplayModeAlways, L"常に表示", body_fmt.Get());
-    paint_radio(mode_focus_, settings_.display_mode == kDisplayModeOnFocus, L"テキスト入力時のみ", body_fmt.Get());
+    draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kDisplaySection), r2f(sec_disp_title_), C(kUiText));
+    paint_radio(mode_always_, settings_.display_mode == kDisplayModeAlways, tr(lang(), StringId::kDisplayAlways), body_fmt.Get());
+    paint_radio(mode_focus_, settings_.display_mode == kDisplayModeOnFocus, tr(lang(), StringId::kDisplayFocus), body_fmt.Get());
     if (settings_.display_mode == kDisplayModeOnFocus && hover_box_.bottom > hover_box_.top) {
-      paint_check(hover_box_, settings_.show_on_hover, L"テキストボックスへホバー時も表示", body_fmt.Get());
+      paint_check(hover_box_, settings_.show_on_hover, tr(lang(), StringId::kDisplayHover), body_fmt.Get());
     }
-    paint_radio(mode_hidden_, settings_.display_mode == kDisplayModeHidden, L"非表示", body_fmt.Get());
+    paint_radio(mode_hidden_, settings_.display_mode == kDisplayModeHidden, tr(lang(), StringId::kDisplayHidden), body_fmt.Get());
+
+    } else if (active_tab_ == Tab::Firefly) {
+    // Firefly tab
+    const int m = dip(kUiMargin);
+    const int inner = content_width();
+    const int row = um.row_h;
+    int fy = m;
+    RECT ff_title = box(m, fy, inner, um.title_h);
+    fy += um.title_h + dip(kUiRowGap);
+    ff_toggle_ = box(m, fy, inner, row);
+    fy += row + dip(kUiRowGap);
+    ff_status_ = box(m, fy, inner, row);
+    fy += row + m;
+    tab_content_h_[1] = fy;
+
+    draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kFireflyTitle), r2f(ff_title), C(kUiText));
+    // Toggle switch
+    {
+      const int tw = dip(kUiToggleW);
+      const int th = dip(kUiToggleH);
+      const int ty = ff_toggle_.top + (row - th) / 2;
+      const float fx_left = static_cast<float>(m + inner - tw);
+      const D2D1_RECT_F track_r = D2D1::RectF(fx_left, static_cast<float>(ty),
+                                               fx_left + tw, static_cast<float>(ty + th));
+      const bool on = settings_.firefly_enabled;
+      fill_round(rt_.Get(), track_r, static_cast<float>(th) / 2.f,
+                 on ? C(kUiTabActive) : C(kUiFill));
+      const int knob = dip(kUiToggleKnob);
+      const int kpad = (th - knob) / 2;
+      const float kx = on ? (fx_left + tw - knob - kpad) : (fx_left + kpad);
+      const D2D1_RECT_F knob_r = D2D1::RectF(kx, static_cast<float>(ty + kpad),
+                                              kx + knob, static_cast<float>(ty + kpad + knob));
+      fill_round(rt_.Get(), knob_r, static_cast<float>(knob) / 2.f, D2D1::ColorF(1, 1, 1, 1));
+      draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kFireflyEnable), r2f(ff_toggle_),
+                C(kUiText), AlignH::Left, AlignV::Center);
+    }
+    // Status
+    draw_text(rt_.Get(), body_fmt.Get(),
+              (settings_.firefly_enabled && g_firefly_active)
+                ? tr(lang(), StringId::kFireflyStateBusy)
+                : tr(lang(), StringId::kFireflyStateAvailable),
+              r2f(ff_status_), C(kUiTextSecondary), AlignH::Left, AlignV::Center);
+
+    } else if (active_tab_ == Tab::General) {
+    // General tab — font size, language, about, quit
+    // Use existing font/about/quit layout positions (computed by layout())
+    draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kFontSection), r2f(sec_font_title_), C(kUiText));
+    draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFontSub), r2f(sec_font_sub_), C(kUiTextSecondary));
+    paint_segments();
     paint_rule(rule3_);
 
-    draw_text(rt_.Get(), title_fmt.Get(), L"文字サイズ", r2f(sec_font_title_), C(kUiText));
-    draw_text(rt_.Get(), sub_fmt.Get(), L"このウィンドウの文字の大きさ", r2f(sec_font_sub_), C(kUiTextSecondary));
-    paint_segments();
+    // Language section
+    {
+      const int m = dip(kUiMargin);
+      const int inner = content_width();
+      const int row = um.row_h;
+      int gy = rule3_.top + dip(kUiSectionGap);
+      RECT lang_title = box(m, gy, inner, um.title_h);
+      gy += um.title_h + dip(kUiRowGap);
+      lang_ja_ = box(m, gy, inner, row);
+      gy += row + dip(kUiSpace1);
+      lang_en_ = box(m, gy, inner, row);
+      gy += row + dip(kUiSectionGap);
+      lang_rule_ = box(m, gy, inner, 1);
+      gy += dip(kUiSectionGap);
+
+      draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kLangSection), r2f(lang_title), C(kUiText));
+      paint_radio(lang_ja_, settings_.language == kLangJa, tr(lang(), StringId::kLangJa), body_fmt.Get());
+      paint_radio(lang_en_, settings_.language == kLangEn, tr(lang(), StringId::kLangEn), body_fmt.Get());
+      paint_rule(lang_rule_);
+    }
+
     paint_rule(rule4_);
 
     fill_round(rt_.Get(), r2f(about_), dip(12), hover_ == Hit::About ? C(kUiFillHover) : C(kUiFill));
-    draw_text(rt_.Get(), body_fmt.Get(), L"バージョン情報...", r2f(about_), C(kUiText), AlignH::Center, AlignV::Center);
+    draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kAbout), r2f(about_), C(kUiText), AlignH::Center, AlignV::Center);
     fill_round(rt_.Get(), r2f(quit_), dip(12),
                hover_ == Hit::Quit ? D2D1::ColorF(200 / 255.f, 50 / 255.f, 50 / 255.f, 38 / 255.f)
                                    : C(kUiDangerFill));
-    draw_text(rt_.Get(), body_fmt.Get(), L"アプリケーションを終了", r2f(quit_), C(kUiDanger), AlignH::Center,
+    draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kQuit), r2f(quit_), C(kUiDanger), AlignH::Center,
               AlignV::Center);
+    } // end of General tab
 
     rt_->SetTransform(D2D1::Matrix3x2F::Identity());
     rt_->PopAxisAlignedClip();
@@ -531,7 +776,7 @@ class SettingsUi {
       const int sb_w = dip(kUiScrollBarWidth);
       const int sb_mr = dip(kUiScrollBarMarginRight);
       const int sb_my = dip(kUiScrollBarMarginY);
-      scroll_bar_ = box(crc.right - sb_mr - sb_w, sb_my, sb_w, crc.bottom - sb_my * 2);
+      scroll_bar_ = box(cw - sb_mr - sb_w, sb_my, sb_w, ch - sb_my * 2);
       ComPtr<ID2D1SolidColorBrush> track;
       rt_->CreateSolidColorBrush(C(kUiFill), track.GetAddressOf());
       rt_->FillRoundedRectangle(RoundRect(r2f(scroll_bar_), 4.f), track.Get());
@@ -648,10 +893,25 @@ class SettingsUi {
     const wchar_t* labels[3] = {L"小", L"中", L"大"};
     const char* keys[3] = {kFontSizeSmall, kFontSizeMedium, kFontSizeLarge};
     RECT parts[3] = {font_small_, font_medium_, font_large_};
+    int sel = -1;
     for (int i = 0; i < 3; ++i) {
-      if (settings_.ui_font_size == keys[i]) {
-        fill_round(rt_.Get(), r2f(parts[i]), dip(8), D2D1::ColorF(1, 1, 1, 0.92f));
+      if (settings_.ui_font_size == keys[i]) sel = i;
+    }
+    if (sel >= 0) {
+      D2D1_RECT_F indicator;
+      if (seg_anim_t_ >= 1.f) {
+        indicator = r2f(parts[sel]);
+      } else {
+        auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
+        indicator = D2D1::RectF(
+            lerp(seg_from_left_, seg_to_left_, seg_anim_t_),
+            static_cast<float>(parts[sel].top),
+            lerp(seg_from_right_, seg_to_right_, seg_anim_t_),
+            static_cast<float>(parts[sel].bottom));
       }
+      fill_round(rt_.Get(), indicator, dip(8), D2D1::ColorF(1, 1, 1, 0.92f));
+    }
+    for (int i = 0; i < 3; ++i) {
       auto fmt = make_format(ui_font_point_size(keys[i]), DWRITE_FONT_WEIGHT_NORMAL);
       draw_text(rt_.Get(), fmt.Get(), labels[i], r2f(parts[i]), C(kUiText), AlignH::Center, AlignV::Center);
     }
@@ -671,74 +931,87 @@ class SettingsUi {
     const int row = um.row_h;
     const int inner = content_width();
     const int radio_gap = dip(kUiSpace1);
-    int y = m;
 
-    sec_color_title_ = box(m, y, inner, um.title_h);
-    y += um.title_h;
-    sec_color_sub_ = box(m, y, inner, um.sub_h);
-    y += um.sub_h + gap;
-    const int color_row = std::max(row, um.swatch_h);
-    jp_label_ = box(m, y, std::max(1, inner - um.swatch_w - gap), color_row);
-    jp_swatch_ = box(m + inner - um.swatch_w, y + (color_row - um.swatch_h) / 2, um.swatch_w, um.swatch_h);
-    y += color_row + gap;
-    en_label_ = box(m, y, std::max(1, inner - um.swatch_w - gap), color_row);
-    en_swatch_ = box(m + inner - um.swatch_w, y + (color_row - um.swatch_h) / 2, um.swatch_w, um.swatch_h);
-    y += color_row + gap;
-    reset_colors_ = box(m, y, inner, row);
-    y += row + sec;
-    rule1_ = box(m, y, inner, 1);
-    y += sec;
-    sec_width_title_ = box(m, y, inner, um.title_h);
-    y += um.title_h;
-    sec_width_sub_ = box(m, y, inner, um.sub_h);
-    y += um.sub_h + gap;
-    const int slider_min = dip(80);
-    int value_w = um.value_w;
-    if (value_w + gap + slider_min > inner) value_w = std::max(dip(48), inner - gap - slider_min);
-    width_value_ = box(m + inner - value_w, y, value_w, row);
-    width_track_ = box(m, y, std::max(1, inner - value_w - gap), row);
-    y += row + gap;
-    reset_width_ = box(m, y, inner, row);
-    y += row + sec;
-    rule2_ = box(m, y, inner, 1);
-    y += sec;
-    sec_disp_title_ = box(m, y, inner, um.title_h);
-    y += um.title_h + gap;
-    mode_always_ = box(m, y, inner, row);
-    y += row + radio_gap;
-    mode_focus_ = box(m, y, inner, row);
-    y += row;
-    if (settings_.display_mode == kDisplayModeOnFocus) {
-      const int hover_h = std::max(1, static_cast<int>(std::lround(row * hover_reveal_t_)));
-      hover_box_ = box(m + dip(12), y, std::max(0, inner - dip(12)), hover_h);
-      y += hover_h;
-    } else {
-      hover_box_ = box(m, y, 0, 0);
+    if (active_tab_ == Tab::Aura) {
+      int y = m;
+      sec_color_title_ = box(m, y, inner, um.title_h);
+      y += um.title_h;
+      sec_color_sub_ = box(m, y, inner, um.sub_h);
+      y += um.sub_h + gap;
+      const int color_row = std::max(row, um.swatch_h);
+      const int sw_w = std::min(um.swatch_w, inner * 35 / 100);
+      jp_label_ = box(m, y, std::max(1, inner - sw_w - gap), color_row);
+      jp_swatch_ = box(m + inner - sw_w, y + (color_row - um.swatch_h) / 2, sw_w, um.swatch_h);
+      y += color_row + gap;
+      en_label_ = box(m, y, std::max(1, inner - sw_w - gap), color_row);
+      en_swatch_ = box(m + inner - sw_w, y + (color_row - um.swatch_h) / 2, sw_w, um.swatch_h);
+      y += color_row + gap;
+      reset_colors_ = box(m, y, inner, row);
+      y += row + sec;
+      rule1_ = box(m, y, inner, 1);
+      y += sec;
+      sec_width_title_ = box(m, y, inner, um.title_h);
+      y += um.title_h;
+      sec_width_sub_ = box(m, y, inner, um.sub_h);
+      y += um.sub_h + gap;
+      const int value_w = std::max(dip(48), inner * 20 / 100);
+      width_value_ = box(m + inner - value_w, y, value_w, row);
+      width_track_ = box(m, y, std::max(1, inner - value_w - gap), row);
+      y += row + gap;
+      reset_width_ = box(m, y, inner, row);
+      y += row + sec;
+      rule2_ = box(m, y, inner, 1);
+      y += sec;
+      sec_disp_title_ = box(m, y, inner, um.title_h);
+      y += um.title_h + gap;
+      mode_always_ = box(m, y, inner, row);
+      y += row + radio_gap;
+      mode_focus_ = box(m, y, inner, row);
+      y += row;
+      if (settings_.display_mode == kDisplayModeOnFocus) {
+        const int hover_h = std::max(1, static_cast<int>(std::lround(row * hover_reveal_t_)));
+        hover_box_ = box(m + dip(12), y, std::max(0, inner - dip(12)), hover_h);
+        y += hover_h;
+      } else {
+        hover_box_ = box(m, y, 0, 0);
+      }
+      y += radio_gap;
+      mode_hidden_ = box(m, y, inner, row);
+      y += row + m;
+      content_height_ = y;
+    } else if (active_tab_ == Tab::Firefly) {
+      int y = m;
+      // Firefly layout is computed inline during paint (ff_toggle_, ff_status_)
+      y += um.title_h + gap + row + gap + row + m;
+      content_height_ = y;
+    } else if (active_tab_ == Tab::General) {
+      int y = m;
+      sec_font_title_ = box(m, y, inner, um.title_h);
+      y += um.title_h;
+      sec_font_sub_ = box(m, y, inner, um.sub_h);
+      y += um.sub_h + gap;
+      font_bar_ = box(m, y, inner, um.font_bar_h);
+      const int inset = dip(kUiSpace1);
+      const int inner_h = std::max(1, um.font_bar_h - inset * 2);
+      const int seg_w = inner / 3;
+      font_small_ = box(m + inset, y + inset, std::max(1, seg_w - inset - 1), inner_h);
+      font_medium_ = box(m + seg_w + 1, y + inset, std::max(1, seg_w - 2), inner_h);
+      font_large_ = box(m + seg_w * 2 + 1, y + inset, std::max(1, inner - seg_w * 2 - inset - 1), inner_h);
+      y += um.font_bar_h + sec;
+      rule3_ = box(m, y, inner, 1);
+      y += sec;
+      // Language section positions are computed inline during paint
+      y += um.title_h + gap + row + radio_gap + row + sec;
+      lang_rule_ = box(m, y, inner, 1);
+      y += sec;
+      rule4_ = box(m, y, inner, 1);
+      y += sec;
+      about_ = box(m, y, inner, row);
+      y += row + gap;
+      quit_ = box(m, y, inner, row);
+      y += row + m;
+      content_height_ = y;
     }
-    y += radio_gap;
-    mode_hidden_ = box(m, y, inner, row);
-    y += row + sec;
-    rule3_ = box(m, y, inner, 1);
-    y += sec;
-    sec_font_title_ = box(m, y, inner, um.title_h);
-    y += um.title_h;
-    sec_font_sub_ = box(m, y, inner, um.sub_h);
-    y += um.sub_h + gap;
-    font_bar_ = box(m, y, inner, um.font_bar_h);
-    const int inset = dip(kUiSpace1);
-    const int inner_h = std::max(1, um.font_bar_h - inset * 2);
-    const int seg = inner / 3;
-    font_small_ = box(m + inset, y + inset, std::max(1, seg - inset - 1), inner_h);
-    font_medium_ = box(m + seg + 1, y + inset, std::max(1, seg - 2), inner_h);
-    font_large_ = box(m + seg * 2 + 1, y + inset, std::max(1, inner - seg * 2 - inset - 1), inner_h);
-    y += um.font_bar_h + sec;
-    rule4_ = box(m, y, inner, 1);
-    y += sec;
-    about_ = box(m, y, inner, row);
-    y += row + gap;
-    quit_ = box(m, y, inner, row);
-    y += row + m;
-    content_height_ = y;
   }
 
   bool contains(const RECT& r, int x, int y) const {
@@ -746,25 +1019,40 @@ class SettingsUi {
   }
 
   Hit hit_test(int x, int y) const {
-    const int cy = y + scroll_y_;
+    if (contains(tab_aura_, x, y)) return Hit::TabAura;
+    if (contains(tab_firefly_, x, y)) return Hit::TabFirefly;
+    if (contains(tab_general_, x, y)) return Hit::TabGeneral;
+
+    const int tab_h = dip(kUiTabBarHeight);
+    if (y < tab_h) return Hit::None;
+    const int cy = y - tab_h + scroll_y_;
+
     if (scroll_max_ > 0 && contains(scroll_bar_, x, y)) return Hit::ScrollBar;
-    if (contains(jp_swatch_, x, cy)) return Hit::JpSwatch;
-    if (contains(en_swatch_, x, cy)) return Hit::EnSwatch;
-    if (contains(reset_colors_, x, cy)) return Hit::ResetColors;
-    if (contains(width_track_, x, cy)) return Hit::WidthTrack;
-    if (contains(width_value_, x, cy)) return Hit::WidthValue;
-    if (contains(reset_width_, x, cy)) return Hit::ResetWidth;
-    if (contains(mode_always_, x, cy)) return Hit::ModeAlways;
-    if (contains(mode_focus_, x, cy)) return Hit::ModeFocus;
-    if (contains(mode_hidden_, x, cy)) return Hit::ModeHidden;
-    if (settings_.display_mode == kDisplayModeOnFocus && hover_box_.bottom > hover_box_.top &&
-        contains(hover_box_, x, cy))
-      return Hit::Hover;
-    if (contains(font_small_, x, cy)) return Hit::FontSmall;
-    if (contains(font_medium_, x, cy)) return Hit::FontMedium;
-    if (contains(font_large_, x, cy)) return Hit::FontLarge;
-    if (contains(about_, x, cy)) return Hit::About;
-    if (contains(quit_, x, cy)) return Hit::Quit;
+
+    if (active_tab_ == Tab::Aura) {
+      if (contains(jp_swatch_, x, cy)) return Hit::JpSwatch;
+      if (contains(en_swatch_, x, cy)) return Hit::EnSwatch;
+      if (contains(reset_colors_, x, cy)) return Hit::ResetColors;
+      if (contains(width_track_, x, cy)) return Hit::WidthTrack;
+      if (contains(width_value_, x, cy)) return Hit::WidthValue;
+      if (contains(reset_width_, x, cy)) return Hit::ResetWidth;
+      if (contains(mode_always_, x, cy)) return Hit::ModeAlways;
+      if (contains(mode_focus_, x, cy)) return Hit::ModeFocus;
+      if (contains(mode_hidden_, x, cy)) return Hit::ModeHidden;
+      if (settings_.display_mode == kDisplayModeOnFocus && hover_box_.bottom > hover_box_.top &&
+          contains(hover_box_, x, cy))
+        return Hit::Hover;
+    } else if (active_tab_ == Tab::Firefly) {
+      if (contains(ff_toggle_, x, cy)) return Hit::FireflyToggle;
+    } else if (active_tab_ == Tab::General) {
+      if (contains(font_small_, x, cy)) return Hit::FontSmall;
+      if (contains(font_medium_, x, cy)) return Hit::FontMedium;
+      if (contains(font_large_, x, cy)) return Hit::FontLarge;
+      if (contains(lang_ja_, x, cy)) return Hit::LangJa;
+      if (contains(lang_en_, x, cy)) return Hit::LangEn;
+      if (contains(about_, x, cy)) return Hit::About;
+      if (contains(quit_, x, cy)) return Hit::Quit;
+    }
     return Hit::None;
   }
 
@@ -806,7 +1094,9 @@ class SettingsUi {
     emit();
   }
 
-  void on_mouse(int x, int y, bool down, bool click) {
+  void on_mouse(int px, int py, bool down, bool click) {
+    const int x = MulDiv(px, 96, dpi_);
+    const int y = MulDiv(py, 96, dpi_);
     if (dragging_scroll_ && down && scroll_max_ > 0) {
       const int track_h = scroll_bar_.bottom - scroll_bar_.top;
       const int thumb_h = std::max(dip(24), track_h * client_height_ / std::max(content_height_, 1));
@@ -826,8 +1116,44 @@ class SettingsUi {
     if (!click) return;
 
     switch (hover_) {
+      case Hit::TabAura:
+        if (active_tab_ != Tab::Aura) {
+          start_tab_anim(active_tab_rect(), tab_aura_);
+          active_tab_ = Tab::Aura;
+        }
+        scroll_y_ = tab_scroll_[0];
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        break;
+      case Hit::TabFirefly:
+        if (active_tab_ != Tab::Firefly) {
+          start_tab_anim(active_tab_rect(), tab_firefly_);
+          active_tab_ = Tab::Firefly;
+        }
+        scroll_y_ = tab_scroll_[1];
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        break;
+      case Hit::TabGeneral:
+        if (active_tab_ != Tab::General) {
+          start_tab_anim(active_tab_rect(), tab_general_);
+          active_tab_ = Tab::General;
+        }
+        scroll_y_ = tab_scroll_[2];
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        break;
       case Hit::ScrollBar:
         dragging_scroll_ = true;
+        break;
+      case Hit::FireflyToggle:
+        settings_.firefly_enabled = !settings_.firefly_enabled;
+        emit();
+        break;
+      case Hit::LangJa:
+        settings_.language = kLangJa;
+        emit();
+        break;
+      case Hit::LangEn:
+        settings_.language = kLangEn;
+        emit();
         break;
       case Hit::JpSwatch:
         if (pick_color(settings_.color_jp)) emit();
@@ -877,22 +1203,31 @@ class SettingsUi {
         emit();
         break;
       case Hit::FontSmall:
-        settings_.ui_font_size = kFontSizeSmall;
+        if (settings_.ui_font_size != kFontSizeSmall) {
+          start_segment_anim(selected_font_rect(), font_small_);
+          settings_.ui_font_size = kFontSizeSmall;
+        }
         emit();
         break;
       case Hit::FontMedium:
-        settings_.ui_font_size = kFontSizeMedium;
+        if (settings_.ui_font_size != kFontSizeMedium) {
+          start_segment_anim(selected_font_rect(), font_medium_);
+          settings_.ui_font_size = kFontSizeMedium;
+        }
         emit();
         break;
       case Hit::FontLarge:
-        settings_.ui_font_size = kFontSizeLarge;
+        if (settings_.ui_font_size != kFontSizeLarge) {
+          start_segment_anim(selected_font_rect(), font_large_);
+          settings_.ui_font_size = kFontSizeLarge;
+        }
         emit();
         break;
       case Hit::About:
         win_show_about_dialog(hwnd_);
         break;
       case Hit::Quit:
-        if (MessageBoxW(hwnd_, L"IME Aura を終了しますか？\n画面縁のグラデーション表示も消えます。", L"IME Aura",
+        if (MessageBoxW(hwnd_, tr(lang(), StringId::kQuitConfirmBody), tr(lang(), StringId::kQuitConfirmTitle),
                         MB_YESNO | MB_ICONWARNING) == IDYES) {
           PostQuitMessage(0);
         }
@@ -932,6 +1267,45 @@ class SettingsUi {
   RECT rule2_{}, sec_disp_title_{}, mode_always_{}, mode_focus_{}, hover_box_{}, mode_hidden_{};
   RECT rule3_{}, sec_font_title_{}, sec_font_sub_{}, font_bar_{}, font_small_{}, font_medium_{}, font_large_{};
   RECT rule4_{}, about_{}, quit_{}, scroll_bar_{};
+
+  Tab active_tab_ = Tab::Aura;
+  RECT tab_aura_{}, tab_firefly_{}, tab_general_{};
+  int tab_scroll_[3]{0, 0, 0};
+  int tab_content_h_[3]{0, 0, 0};
+  RECT ff_toggle_{}, ff_status_{};
+  RECT lang_ja_{}, lang_en_{}, lang_rule_{};
+  bool save_pending_ = false;
+  float tab_anim_t_ = 1.f;
+  float tab_from_left_ = 0.f;
+  float tab_from_right_ = 0.f;
+  float tab_to_left_ = 0.f;
+  float tab_to_right_ = 0.f;
+  std::chrono::steady_clock::time_point tab_anim_start_{};
+  float seg_anim_t_ = 1.f;
+  float seg_from_left_ = 0.f;
+  float seg_from_right_ = 0.f;
+  float seg_to_left_ = 0.f;
+  float seg_to_right_ = 0.f;
+  std::chrono::steady_clock::time_point seg_anim_start_{};
+
+  Lang lang() const { return lang_from_key(settings_.language); }
+
+  void emit_debounced() {
+    settings_ = normalize_settings(settings_);
+    if (callback_) callback_(settings_);
+    if (!save_pending_) {
+      save_pending_ = true;
+      SetTimer(hwnd_, kSaveTimerId, kSaveDebounceMs, nullptr);
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
+  }
+
+  void flush_save() {
+    if (save_pending_) {
+      save_pending_ = false;
+      KillTimer(hwnd_, kSaveTimerId);
+    }
+  }
 };
 
 SettingsUi g_ui;

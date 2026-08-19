@@ -39,12 +39,20 @@ inline constexpr int kUiButtonPadX = 14;
 inline constexpr int kUiHitMin = 32;
 inline constexpr int kUiSwatchW = 104;
 inline constexpr int kUiSwatchH = 32;
-inline constexpr int kUiMinWindowW = 360;
-inline constexpr int kUiMinWindowH = 560;
+inline constexpr int kUiMinWindowW = 300;
+inline constexpr int kUiMinWindowH = 300;
 inline constexpr int kUiScrollBarWidth = 12;
 inline constexpr int kUiScrollBarMarginY = 8;
 inline constexpr int kUiScrollBarMarginRight = 3;
-inline constexpr int kUiScrollBarGutter = kUiScrollBarWidth + kUiScrollBarMarginRight + 3;
+inline constexpr int kUiScrollBarGutter = kUiScrollBarWidth + kUiScrollBarMarginRight;
+
+inline constexpr int kUiTabBarHeight = 40;
+inline constexpr int kUiTabPadX = 16;
+inline constexpr int kUiTabIndicatorH = 3;
+inline constexpr Rgba kUiTabActive{45, 129, 253, 255};
+inline constexpr int kUiToggleW = 44;
+inline constexpr int kUiToggleH = 24;
+inline constexpr int kUiToggleKnob = 18;
 
 inline int motion_ms(int duration, bool reduce_motion) {
   return reduce_motion ? 0 : (duration < 0 ? 0 : duration);
