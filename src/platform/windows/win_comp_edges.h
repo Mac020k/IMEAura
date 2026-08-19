@@ -27,7 +27,7 @@ class WinCompEdges {
 
 bool win_check_os_and_compositor();
 
-// Composition-backed edge hosts cannot rely on WM_NCHITTEST alone; disable HWND input.
+// Edge host windows are explicitly configured for click-through.
 void win_edge_host_set_input_passthrough(HWND host);
 
 }  // namespace imeaura

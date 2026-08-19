@@ -17,6 +17,11 @@ add_executable(IMEAura
   app/main.cpp
   app/app.cpp
 )
+if(WIN32)
+  target_sources(IMEAura PRIVATE
+    platform/windows/imeaura.rc
+  )
+endif()
 target_link_libraries(IMEAura PRIVATE imeaura_core imeaura_platform)
 set_target_properties(IMEAura PROPERTIES OUTPUT_NAME "IMEAura")
 

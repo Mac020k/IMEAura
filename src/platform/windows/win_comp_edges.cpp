@@ -197,7 +197,6 @@ void WinCompEdges::layout(const Rect& monitor, int thickness_px) {
     const HWND host = impl_->layers[static_cast<size_t>(i)].host;
     if (!host) continue;
     SetWindowPos(host, HWND_TOPMOST, p.x, p.y, p.w, p.h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    ApplyEdgeHostInputPassthrough(host);
   }
 }
 

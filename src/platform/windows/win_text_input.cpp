@@ -156,6 +156,9 @@ std::atomic<bool> g_focused{false};
 std::atomic<bool> g_hovered{false};
 std::atomic<bool> g_stop{true};
 std::thread g_worker;
+std::mutex g_worker_mutex;
+std::atomic<bool> g_worker_join_in_progress{false};
+std::atomic<bool> g_pending_start{false};
 std::mutex g_callback_mutex;
 std::function<void()> g_changed_callback;
 
@@ -208,13 +211,40 @@ void WorkerLoop() {
 }  // namespace
 
 void win_text_input_start() {
+  std::lock_guard lock(g_worker_mutex);
+
+  if (g_worker_join_in_progress.load(std::memory_order_relaxed)) {
+    g_pending_start.store(true, std::memory_order_relaxed);
+    return;
+  }
+
+  g_pending_start.store(false, std::memory_order_relaxed);
   if (!g_stop.exchange(false)) return;
   g_worker = std::thread(WorkerLoop);
 }
 
 void win_text_input_stop() {
-  if (g_stop.exchange(true)) return;
-  if (g_worker.joinable()) g_worker.join();
+  g_pending_start.store(false, std::memory_order_relaxed);
+
+  std::unique_lock lock(g_worker_mutex);
+  const bool already_stopped = g_stop.exchange(true);
+  if (already_stopped) return;
+
+  if (g_worker.joinable()) {
+    g_worker_join_in_progress.store(true, std::memory_order_relaxed);
+    std::thread worker_to_join = std::move(g_worker);
+    lock.unlock();
+
+    std::thread([t = std::move(worker_to_join)]() mutable {
+      t.join();
+      g_worker_join_in_progress.store(false, std::memory_order_relaxed);
+
+      const bool want = g_pending_start.exchange(false, std::memory_order_relaxed);
+      if (want) {
+        win_text_input_start();
+      }
+    }).detach();
+  }
 }
 
 bool win_text_input_focused() {

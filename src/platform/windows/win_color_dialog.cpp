@@ -56,7 +56,7 @@ class ColorDialogUi {
     RECT owner_rc{};
     GetWindowRect(owner, &owner_rc);
     const int w = 360;
-    const int h = 420;
+    const int h = 300;
     const int x = owner_rc.left + ((owner_rc.right - owner_rc.left) - w) / 2;
     const int y = owner_rc.top + ((owner_rc.bottom - owner_rc.top) - h) / 2;
 
@@ -168,19 +168,20 @@ class ColorDialogUi {
   void layout() {
     RECT rc{};
     GetClientRect(hwnd_, &rc);
-    const int m = dip(20);
-    const int row = dip(28);
+    const int m = dip(16);
+    const int row = dip(26);
+    const int row_gap = dip(6);
     int y = m;
-    preview_ = box(m, y, rc.right - m * 2, dip(48));
-    y += dip(56);
+    preview_ = box(m, y, rc.right - m * 2, dip(44));
+    y += dip(44) + dip(12);
     slider_r_ = box(m, y, rc.right - m * 2, row);
-    y += row + dip(8);
+    y += row + row_gap;
     slider_g_ = box(m, y, rc.right - m * 2, row);
-    y += row + dip(8);
+    y += row + row_gap;
     slider_b_ = box(m, y, rc.right - m * 2, row);
-    y += row + dip(8);
+    y += row + row_gap;
     slider_a_ = box(m, y, rc.right - m * 2, row);
-    y += row + dip(20);
+    y += row + dip(12);
     const int btn_w = (rc.right - m * 2 - dip(8)) / 2;
     ok_ = box(m, y, btn_w, row);
     cancel_ = box(m + btn_w + dip(8), y, btn_w, row);
@@ -258,35 +259,49 @@ class ColorDialogUi {
     }
   }
 
-  void paint_slider(const RECT& rc, const wchar_t* label, uint8_t value, const D2D1_COLOR_F& accent) {
+  ComPtr<IDWriteTextFormat> make_slider_text_format(DWRITE_TEXT_ALIGNMENT align) {
     ComPtr<IDWriteTextFormat> fmt;
     dwrite_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
                               DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(dip(12)), L"en-us",
                               fmt.GetAddressOf());
-    draw_text(fmt.Get(), label, r2f(box(rc.left, rc.top, dip(16), rc.bottom - rc.top)), UiColor(kUiTextSecondary));
+    fmt->SetTextAlignment(align);
+    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    return fmt;
+  }
 
-    const float track_left = static_cast<float>(rc.left + dip(20));
-    const float track_right = static_cast<float>(rc.right - dip(36));
-    const float mid_y = (rc.top + rc.bottom) * 0.5f;
+  void paint_slider(const RECT& rc, const wchar_t* label, uint8_t value, const D2D1_COLOR_F& accent) {
+    const auto label_fmt = make_slider_text_format(DWRITE_TEXT_ALIGNMENT_CENTER);
+    const auto value_fmt = make_slider_text_format(DWRITE_TEXT_ALIGNMENT_TRAILING);
+    const D2D1_RECT_F row_box = r2f(rc);
+
+    draw_text(label_fmt.Get(), label, D2D1::RectF(row_box.left, row_box.top, row_box.left + dip(18), row_box.bottom),
+              UiColor(kUiTextSecondary));
+
+    const float track_left = row_box.left + dip(22);
+    const float track_right = row_box.right - dip(40);
+    const float mid_y = (row_box.top + row_box.bottom) * 0.5f;
+    const float track_h = static_cast<float>(dip(4));
+    const float knob_r = static_cast<float>(dip(6));
 
     ComPtr<ID2D1SolidColorBrush> back;
     rt_->CreateSolidColorBrush(UiColor(kUiFill), back.GetAddressOf());
-    rt_->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(track_left, mid_y - 2, track_right, mid_y + 2), 2, 2),
-                              back.Get());
+    rt_->FillRoundedRectangle(
+        D2D1::RoundedRect(D2D1::RectF(track_left, mid_y - track_h * 0.5f, track_right, mid_y + track_h * 0.5f), 2, 2),
+        back.Get());
 
     const float t = value / 255.f;
     const float knob_x = track_left + t * (track_right - track_left);
     ComPtr<ID2D1SolidColorBrush> acc;
     rt_->CreateSolidColorBrush(accent, acc.GetAddressOf());
     rt_->FillRoundedRectangle(
-        D2D1::RoundedRect(D2D1::RectF(track_left, mid_y - 2, knob_x, mid_y + 2), 2, 2), acc.Get());
-    rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(knob_x, mid_y), 6.f, 6.f), acc.Get());
+        D2D1::RoundedRect(D2D1::RectF(track_left, mid_y - track_h * 0.5f, knob_x, mid_y + track_h * 0.5f), 2, 2),
+        acc.Get());
+    rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(knob_x, mid_y), knob_r, knob_r), acc.Get());
 
     wchar_t buf[16];
     swprintf_s(buf, L"%u", static_cast<unsigned>(value));
-    draw_text(fmt.Get(), buf, D2D1::RectF(track_right + dip(4), static_cast<float>(rc.top),
-                                          static_cast<float>(rc.right), static_cast<float>(rc.bottom)),
-              UiColor(kUiText));
+    draw_text(value_fmt.Get(), buf,
+              D2D1::RectF(track_right + dip(6), row_box.top, row_box.right, row_box.bottom), UiColor(kUiText));
   }
 
   void draw_text(IDWriteTextFormat* fmt, const wchar_t* text, const D2D1_RECT_F& box, const D2D1_COLOR_F& color) {
@@ -331,9 +346,9 @@ class ColorDialogUi {
     rt_->FillRoundedRectangle(D2D1::RoundedRect(r2f(preview_), static_cast<float>(dip(10)), static_cast<float>(dip(10))),
                               preview_brush.Get());
 
-    paint_slider(slider_r_, L"R", color_.r, D2D1::ColorF(0.97f, 0.16f, 0.27f, 1.f));
-    paint_slider(slider_g_, L"G", color_.g, D2D1::ColorF(0.18f, 0.51f, 0.99f, 1.f));
-    paint_slider(slider_b_, L"B", color_.b, D2D1::ColorF(0.18f, 0.35f, 0.99f, 1.f));
+    paint_slider(slider_r_, L"R", color_.r, D2D1::ColorF(0.96f, 0.26f, 0.21f, 1.f));
+    paint_slider(slider_g_, L"G", color_.g, D2D1::ColorF(0.13f, 0.77f, 0.37f, 1.f));
+    paint_slider(slider_b_, L"B", color_.b, D2D1::ColorF(0.18f, 0.51f, 0.99f, 1.f));
     paint_slider(slider_a_, L"A", color_.a, UiColor(kUiTextSecondary));
 
     paint_button(ok_, L"OK", true);

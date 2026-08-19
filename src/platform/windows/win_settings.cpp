@@ -619,7 +619,25 @@ class SettingsUi {
     const float s = static_cast<float>(std::max(1, dip(14)));
     const float x = static_cast<float>(rc.left + dip(4));
     const float y = (rc.top + rc.bottom) * 0.5f - s * 0.5f;
-    fill_round(rt_.Get(), D2D1::RectF(x, y, x + s, y + s), 3.f, on ? C(kDefaultColorEn) : C(kUiFill));
+    const D2D1_RECT_F box = D2D1::RectF(x, y, x + s, y + s);
+    const D2D1_COLOR_F fill_color = on ? C(kDefaultColorEn) : C(kUiFill);
+    fill_round(rt_.Get(), box, 3.f, fill_color);
+
+    ComPtr<ID2D1SolidColorBrush> stroke;
+    rt_->CreateSolidColorBrush(on ? C(kDefaultColorEn) : C(kUiTextSecondary, 0.72f), stroke.GetAddressOf());
+    rt_->DrawRoundedRectangle(RoundRect(box, 3.f), stroke.Get(), 1.2f);
+
+    if (on) {
+      ComPtr<ID2D1SolidColorBrush> mark;
+      rt_->CreateSolidColorBrush(D2D1::ColorF(1.f, 1.f, 1.f, 1.f), mark.GetAddressOf());
+      const D2D1_POINT_2F p1 = D2D1::Point2F(x + s * 0.24f, y + s * 0.54f);
+      const D2D1_POINT_2F p2 = D2D1::Point2F(x + s * 0.43f, y + s * 0.72f);
+      const D2D1_POINT_2F p3 = D2D1::Point2F(x + s * 0.78f, y + s * 0.32f);
+      const float mark_thickness = std::max(1.75f, static_cast<float>(dip(2)));
+      rt_->DrawLine(p1, p2, mark.Get(), mark_thickness);
+      rt_->DrawLine(p2, p3, mark.Get(), mark_thickness);
+    }
+
     D2D1_RECT_F text = r2f(rc);
     text.left = x + s + static_cast<float>(dip(kUiRowGap));
     draw_text(rt_.Get(), fmt, label, text, C(kUiText), AlignH::Left, AlignV::Center);
