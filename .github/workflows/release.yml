@@ -64,7 +64,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $bin = "build/windows-msvc/Release"
+          $bin = "build/windows-msvc/src/Release"
           Copy-Item LICENSE, THIRD_PARTY_NOTICES.md, img/icon.ico -Destination $bin
           Compress-Archive -Path "$bin/*" -DestinationPath ${{ matrix.artifact_name }}.zip
 
@@ -72,14 +72,14 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           mkdir -p dist/IMEAura
-          cp build/linux-ninja/IMEAura LICENSE THIRD_PARTY_NOTICES.md img/icon.ico dist/IMEAura/
+          cp build/linux-ninja/src/IMEAura LICENSE THIRD_PARTY_NOTICES.md img/icon.ico dist/IMEAura/
           (cd dist/IMEAura && zip -r "../../${{ matrix.artifact_name }}.zip" .)
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: |
           mkdir -p dist/IMEAura.app/Contents/MacOS
-          cp build/macos-clang/IMEAura dist/IMEAura.app/Contents/MacOS/
+          cp build/macos-clang/src/IMEAura dist/IMEAura.app/Contents/MacOS/
           cp LICENSE THIRD_PARTY_NOTICES.md dist/IMEAura.app/Contents/
           ditto -c -k --keepParent dist/IMEAura.app "${{ matrix.artifact_name }}.zip"
 
