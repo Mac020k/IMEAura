@@ -93,6 +93,17 @@ void ShowEdgeHosts(const std::array<HWND, kEdgeHostCount>& hosts) {
   }
 }
 
+void NotifyFireflyStateChanged() {
+  win_settings::set_firefly_active(g_firefly && g_firefly->is_active());
+}
+
+auto MakeFireflyToggleCallback(WinPlatformBackend* self) {
+  return [self] {
+    if (g_app_hwnd) PostMessageW(g_app_hwnd, kRefreshMessage, 0, 0);
+    NotifyFireflyStateChanged();
+  };
+}
+
 }  // namespace
 
 WinPlatformBackend::WinPlatformBackend() = default;
@@ -170,6 +181,7 @@ bool WinPlatformBackend::init() {
 
   if (!win_settings::create(g_instance, settings_, [this](const Settings& s) {
         const bool was_ff = settings_.firefly_enabled;
+        const std::string prev_caps_mode = settings_.firefly_caps_mode;
         settings_ = s;
         save_settings(settings_);
         notify_settings_changed(settings_);
@@ -177,15 +189,16 @@ bool WinPlatformBackend::init() {
         if (s.firefly_enabled && !was_ff) {
           if (!g_firefly) g_firefly = std::make_unique<WinFireflyBackend>();
           g_firefly->set_target_hwnd(g_app_hwnd);
-          g_firefly->start([this] {
-            if (g_app_hwnd) PostMessageW(g_app_hwnd, kRefreshMessage, 0, 0);
-          });
+          g_firefly->start(MakeFireflyToggleCallback(this), s.firefly_caps_mode);
+          NotifyFireflyStateChanged();
         } else if (!s.firefly_enabled && was_ff && g_firefly) {
           g_firefly->stop();
           g_firefly.reset();
+          win_settings::set_firefly_active(false);
+        } else if (s.firefly_enabled && was_ff && g_firefly && s.firefly_caps_mode != prev_caps_mode) {
+          g_firefly->set_caps_mode(s.firefly_caps_mode);
         }
-        last_input_ = {};
-        update_state();
+        update_state(true);
       })) {
     return false;
   }
@@ -193,9 +206,8 @@ bool WinPlatformBackend::init() {
   if (settings_.firefly_enabled) {
     g_firefly = std::make_unique<WinFireflyBackend>();
     g_firefly->set_target_hwnd(g_app_hwnd);
-    g_firefly->start([this] {
-      if (g_app_hwnd) PostMessageW(g_app_hwnd, kRefreshMessage, 0, 0);
-    });
+    g_firefly->start(MakeFireflyToggleCallback(this), settings_.firefly_caps_mode);
+    NotifyFireflyStateChanged();
   }
 
   sync_text_watchers();
@@ -223,6 +235,7 @@ void WinPlatformBackend::shutdown() {
   if (g_firefly) {
     g_firefly->stop();
     g_firefly.reset();
+    win_settings::set_firefly_active(false);
   }
   g_edges.shutdown();
   g_tray.destroy();
@@ -302,13 +315,13 @@ ProbeState WinPlatformBackend::probe_state(const Settings& settings) {
 
 void WinPlatformBackend::request_refresh() { update_state(); }
 
-void WinPlatformBackend::update_state() {
+void WinPlatformBackend::update_state(bool force) {
   PolicyInput in{};
   in.ime_japanese = is_japanese_input();
   in.text_focused = is_text_input_focused();
   in.text_hovered = is_text_input_hovered();
   in.reduce_motion = reduce_motion_cached_;
-  if (in == last_input_) return;
+  if (!force && in == last_input_) return;
   last_input_ = in;
   last_activity_tick_ = GetTickCount();
   apply_policy(settings_, evaluate_policy(settings_, in));

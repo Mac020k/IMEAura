@@ -6,6 +6,10 @@ inline constexpr const char* kFireflyLedAuto = "auto";
 inline constexpr const char* kFireflyLedHid = "hid";
 inline constexpr const char* kFireflyLedNone = "none";
 
+inline constexpr const char* kFireflyCapsPreserve = "preserve";
+inline constexpr const char* kFireflyCapsUppercase = "uppercase";
+inline constexpr const char* kFireflyCapsLowercase = "lowercase";
+
 inline constexpr const char* kLangJa = "ja";
 inline constexpr const char* kLangEn = "en";
 

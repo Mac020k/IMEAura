@@ -42,6 +42,10 @@ const wchar_t* kJa[static_cast<size_t>(StringId::kCount)] = {
   L"Firefly \u6A5F\u80FD\u3092\u6709\u52B9\u306B\u3059\u308B", // kFireflyEnable
   L"\u5FDC\u7B54\u4E0D\u53EF",                   // kFireflyStateBusy
   L"\u5FDC\u7B54\u53EF\u80FD",                   // kFireflyStateAvailable
+  L"CapsLock \u306E\u72B6\u614B",                // kFireflyCapsSection
+  L"\u6709\u52B9\u5316\u76F4\u524D\u306E\u72B6\u614B\u3092\u7DAD\u6301", // kFireflyCapsPreserve
+  L"\u5927\u6587\u5B57\u30D9\u30FC\u30B9",       // kFireflyCapsUppercase
+  L"\u5C0F\u6587\u5B57\u30D9\u30FC\u30B9",       // kFireflyCapsLowercase
   L"CapsLock \u30AD\u30FC\u306E\u6A2A\u53D6\u308A: OK", // kFireflyCapsOk
   L"LED \u5236\u5FA1: OK",                       // kFireflyLedOk
   L"\u901A\u77E5\u6291\u5236: OK",               // kFireflyDndOk
@@ -89,6 +93,10 @@ const wchar_t* kEn[static_cast<size_t>(StringId::kCount)] = {
   L"Enable Firefly",                             // kFireflyEnable
   L"Do Not Disturb",                             // kFireflyStateBusy
   L"Available",                                  // kFireflyStateAvailable
+  L"CapsLock state",                             // kFireflyCapsSection
+  L"Keep state before enabling",                 // kFireflyCapsPreserve
+  L"Uppercase base",                             // kFireflyCapsUppercase
+  L"Lowercase base",                             // kFireflyCapsLowercase
   L"CapsLock interception: OK",                  // kFireflyCapsOk
   L"LED control: OK",                            // kFireflyLedOk
   L"Notification suppression: OK",               // kFireflyDndOk

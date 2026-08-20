@@ -25,6 +25,7 @@ struct Settings {
   int gradient_width = kDefaultGradientWidth;
   bool firefly_enabled = false;
   std::string firefly_led_mode = kFireflyLedAuto;
+  std::string firefly_caps_mode = kFireflyCapsUppercase;
   std::string language = kLangJa;
 };
 

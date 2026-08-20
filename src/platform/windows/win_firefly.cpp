@@ -1,10 +1,13 @@
 #include "platform/windows/win_firefly.h"
 
+#include "core/firefly.h"
+
 #include <windows.h>
 #include <hidsdi.h>
 #include <hidpi.h>
 #include <setupapi.h>
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstdlib>
@@ -39,6 +42,24 @@ LRESULT CALLBACK CapsHookProc(int code, WPARAM wp, LPARAM lp) {
   return CallNextHookEx(nullptr, code, wp, lp);
 }
 
+bool SetCapsLockLedKeyboardState(bool on) {
+  BYTE state[256]{};
+  if (!GetKeyboardState(state)) return false;
+  const bool cur = (state[VK_CAPITAL] & 1) != 0;
+  if (cur == on) return true;
+  if (on)
+    state[VK_CAPITAL] |= 1;
+  else
+    state[VK_CAPITAL] &= ~1;
+  return SetKeyboardState(state) != FALSE;
+}
+
+bool GetCapsLockState() {
+  BYTE state[256]{};
+  if (!GetKeyboardState(state)) return false;
+  return (state[VK_CAPITAL] & 1) != 0;
+}
+
 bool SetCapsLockLed(bool on) {
   GUID hid_guid{};
   HidD_GetHidGuid(&hid_guid);
@@ -68,7 +89,8 @@ bool SetCapsLockLed(bool on) {
     PHIDP_PREPARSED_DATA ppd = nullptr;
     if (HidD_GetPreparsedData(hid, &ppd)) {
       HIDP_CAPS caps{};
-      if (HidP_GetCaps(ppd, &caps) == HIDP_STATUS_SUCCESS && caps.OutputReportByteLength > 0) {
+      if (HidP_GetCaps(ppd, &caps) == HIDP_STATUS_SUCCESS && caps.UsagePage == 0x01 &&
+          caps.Usage == 0x06 && caps.OutputReportByteLength > 0) {
         USHORT num_leds = 0;
         HIDP_VALUE_CAPS led_caps[16]{};
         num_leds = 16;
@@ -77,6 +99,8 @@ bool SetCapsLockLed(bool on) {
           for (USHORT j = 0; j < num_leds; ++j) {
             if (led_caps[j].Range.UsageMin <= 0x02 && led_caps[j].Range.UsageMax >= 0x02) {
               std::vector<BYTE> report(caps.OutputReportByteLength, 0);
+              const USHORT report_id = led_caps[j].ReportID;
+              if (report_id != 0) report[0] = static_cast<BYTE>(report_id);
               HidP_SetUsageValue(HidP_Output, 0x08, 0, 0x02, on ? 1 : 0, ppd, (PCHAR)report.data(),
                                  (ULONG)report.size());
               if (HidD_SetOutputReport(hid, report.data(), (ULONG)report.size())) {
@@ -95,15 +119,81 @@ bool SetCapsLockLed(bool on) {
   return success;
 }
 
-std::wstring DndRegPath() {
-  return L"Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\Cache\\DefaultAccount\\"
-         L"$$windows.data.notifications.quiethourssettings\\Current";
+std::wstring g_dnd_reg_path;
+
+const std::array<std::wstring, 2>& DndRegPathCandidates() {
+  static const std::array<std::wstring, 2> kPaths = {
+      L"Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\"
+      L"{df7eeb95-82d3-4b7d-a1a6-d22a13380da6}$windows.data.donotdisturb.quiethourssettings\\"
+      L"windows.data.donotdisturb.quiethourssettings",
+      L"Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\Cache\\DefaultAccount\\"
+      L"$$windows.data.notifications.quiethourssettings\\Current",
+  };
+  return kPaths;
+}
+
+HKEY OpenDndKey(DWORD access, size_t* path_index = nullptr) {
+  const auto& paths = DndRegPathCandidates();
+  for (size_t i = 0; i < paths.size(); ++i) {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, paths[i].c_str(), 0, access, &key) == ERROR_SUCCESS) {
+      g_dnd_reg_path = paths[i];
+      if (path_index) *path_index = i;
+      return key;
+    }
+  }
+  return nullptr;
+}
+
+std::vector<BYTE> Utf16LeBytes(const std::wstring& text) {
+  std::vector<BYTE> out(text.size() * 2);
+  for (size_t i = 0; i < text.size(); ++i) {
+    const wchar_t ch = text[i];
+    out[i * 2] = static_cast<BYTE>(ch & 0xFF);
+    out[i * 2 + 1] = static_cast<BYTE>((ch >> 8) & 0xFF);
+  }
+  return out;
+}
+
+size_t FindBytePattern(const std::vector<BYTE>& haystack, const std::vector<BYTE>& needle) {
+  if (needle.empty() || haystack.size() < needle.size()) return std::wstring::npos;
+  for (size_t i = 0; i <= haystack.size() - needle.size(); ++i) {
+    if (std::equal(needle.begin(), needle.end(), haystack.begin() + static_cast<std::ptrdiff_t>(i)))
+      return i;
+  }
+  return std::wstring::npos;
+}
+
+bool QuietHoursProfileActive(const std::vector<BYTE>& data) {
+  static const std::wstring kPriorityOnly = L"Microsoft.QuietHoursProfile.PriorityOnly";
+  static const std::wstring kAlarmsOnly = L"Microsoft.QuietHoursProfile.AlarmsOnly";
+  return FindBytePattern(data, Utf16LeBytes(kPriorityOnly)) != std::wstring::npos ||
+         FindBytePattern(data, Utf16LeBytes(kAlarmsOnly)) != std::wstring::npos;
+}
+
+bool SwapQuietHoursProfile(std::vector<BYTE>& data, bool enable_dnd) {
+  static const std::wstring kUnrestricted = L"Microsoft.QuietHoursProfile.Unrestricted";
+  static const std::wstring kPriorityOnly = L"Microsoft.QuietHoursProfile.PriorityOnly";
+  static const std::wstring kAlarmsOnly = L"Microsoft.QuietHoursProfile.AlarmsOnly";
+  const std::wstring& to = enable_dnd ? kPriorityOnly : kUnrestricted;
+  const std::wstring* from_candidates[] = {&kUnrestricted, &kPriorityOnly, &kAlarmsOnly};
+  for (const std::wstring* from : from_candidates) {
+    if (*from == to) continue;
+    const auto from_bytes = Utf16LeBytes(*from);
+    const auto pos = FindBytePattern(data, from_bytes);
+    if (pos == std::wstring::npos) continue;
+    const auto to_bytes = Utf16LeBytes(to);
+    data.erase(data.begin() + static_cast<std::ptrdiff_t>(pos),
+               data.begin() + static_cast<std::ptrdiff_t>(pos + from_bytes.size()));
+    data.insert(data.begin() + static_cast<std::ptrdiff_t>(pos), to_bytes.begin(), to_bytes.end());
+    return true;
+  }
+  return false;
 }
 
 bool ReadDndState(bool& dnd_on) {
-  HKEY key = nullptr;
-  if (RegOpenKeyExW(HKEY_CURRENT_USER, DndRegPath().c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS)
-    return false;
+  HKEY key = OpenDndKey(KEY_READ);
+  if (!key) return false;
 
   DWORD type = 0, size = 0;
   RegQueryValueExW(key, L"Data", nullptr, &type, nullptr, &size);
@@ -119,9 +209,7 @@ bool ReadDndState(bool& dnd_on) {
   }
   RegCloseKey(key);
 
-  std::wstring blob(reinterpret_cast<const wchar_t*>(data.data() + 0x1a),
-                    (size - 0x1a) / sizeof(wchar_t));
-  dnd_on = blob.find(L"Microsoft.QuietHoursProfile.PriorityOnly") != std::wstring::npos;
+  dnd_on = QuietHoursProfileActive(data);
   return true;
 }
 
@@ -135,12 +223,14 @@ std::string BackupPath() {
 }
 
 void BackupDndBlob() {
-  HKEY key = nullptr;
-  if (RegOpenKeyExW(HKEY_CURRENT_USER, DndRegPath().c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS)
-    return;
+  HKEY key = OpenDndKey(KEY_READ);
+  if (!key) return;
   DWORD size = 0;
   RegQueryValueExW(key, L"Data", nullptr, nullptr, nullptr, &size);
-  if (size == 0) { RegCloseKey(key); return; }
+  if (size == 0) {
+    RegCloseKey(key);
+    return;
+  }
   std::vector<BYTE> data(size);
   RegQueryValueExW(key, L"Data", nullptr, nullptr, data.data(), &size);
   RegCloseKey(key);
@@ -164,8 +254,8 @@ void RestoreDndBlob() {
   f.read(reinterpret_cast<char*>(data.data()), size);
   f.close();
 
-  HKEY key = nullptr;
-  if (RegOpenKeyExW(HKEY_CURRENT_USER, DndRegPath().c_str(), 0, KEY_WRITE, &key) == ERROR_SUCCESS) {
+  HKEY key = OpenDndKey(KEY_WRITE);
+  if (key) {
     RegSetValueExW(key, L"Data", 0, REG_BINARY, data.data(), static_cast<DWORD>(data.size()));
     RegCloseKey(key);
   }
@@ -212,6 +302,9 @@ struct WinFireflyBackend::Impl {
   std::atomic<bool> active{false};
   std::atomic<bool> led_ok{false};
   bool dnd_backed_up = false;
+  std::string caps_mode = kFireflyCapsUppercase;
+  bool saved_caps = false;
+  bool saved_caps_valid = false;
 
   std::mutex dnd_mutex;
   std::condition_variable dnd_cv;
@@ -231,30 +324,17 @@ struct WinFireflyBackend::Impl {
         dnd_pending = false;
       }
       // Write DND state via registry — this is blocking I/O
-      HKEY key = nullptr;
-      if (RegOpenKeyExW(HKEY_CURRENT_USER, DndRegPath().c_str(), 0, KEY_READ | KEY_WRITE, &key) ==
-          ERROR_SUCCESS) {
+      HKEY key = OpenDndKey(KEY_READ | KEY_WRITE);
+      if (key) {
         DWORD size = 0;
         RegQueryValueExW(key, L"Data", nullptr, nullptr, nullptr, &size);
         if (size >= 0x20) {
           std::vector<BYTE> data(size);
-          RegQueryValueExW(key, L"Data", nullptr, nullptr, data.data(), &size);
-
-          // Swap the profile string in the blob
-          std::wstring blob(reinterpret_cast<const wchar_t*>(data.data() + 0x1a),
-                            (size - 0x1a) / sizeof(wchar_t));
-          const wchar_t* from_str = target ? L"Microsoft.QuietHoursProfile.Unrestricted"
-                                           : L"Microsoft.QuietHoursProfile.PriorityOnly";
-          const wchar_t* to_str = target ? L"Microsoft.QuietHoursProfile.PriorityOnly"
-                                         : L"Microsoft.QuietHoursProfile.Unrestricted";
-          auto pos = blob.find(from_str);
-          if (pos != std::wstring::npos) {
-            blob.replace(pos, wcslen(from_str), to_str);
-            std::vector<BYTE> new_data(data.begin(), data.begin() + 0x1a);
-            const auto* ws = reinterpret_cast<const BYTE*>(blob.data());
-            new_data.insert(new_data.end(), ws, ws + blob.size() * sizeof(wchar_t));
-            RegSetValueExW(key, L"Data", 0, REG_BINARY, new_data.data(),
-                           static_cast<DWORD>(new_data.size()));
+          if (RegQueryValueExW(key, L"Data", nullptr, nullptr, data.data(), &size) == ERROR_SUCCESS) {
+            if (SwapQuietHoursProfile(data, target)) {
+              RegSetValueExW(key, L"Data", 0, REG_BINARY, data.data(),
+                             static_cast<DWORD>(data.size()));
+            }
           }
         }
         RegCloseKey(key);
@@ -277,10 +357,21 @@ FireflyCaps WinFireflyBackend::caps() const {
   return c;
 }
 
-bool WinFireflyBackend::start(std::function<void()> on_toggle) {
+bool WinFireflyBackend::start(std::function<void()> on_toggle, const std::string& caps_mode) {
   if (impl_) return true;
   impl_ = new Impl();
   impl_->on_toggle = std::move(on_toggle);
+  impl_->caps_mode = caps_mode;
+  impl_->active.store(false);
+
+  if (caps_mode == kFireflyCapsPreserve) {
+    impl_->saved_caps = GetCapsLockState();
+    impl_->saved_caps_valid = true;
+  } else if (caps_mode == kFireflyCapsLowercase) {
+    set_led(true);
+  } else {
+    set_led(false);
+  }
 
   RestoreDndBlob();
   BackupDndBlob();
@@ -310,7 +401,9 @@ void WinFireflyBackend::stop() {
   if (impl_->dnd_thread.joinable()) impl_->dnd_thread.join();
 
   if (impl_->active.load()) {
-    set_led(false);
+    apply_led_for_state(false);
+  } else if (impl_->caps_mode == kFireflyCapsPreserve && impl_->saved_caps_valid) {
+    set_led(impl_->saved_caps);
   }
   if (impl_->dnd_backed_up) {
     RestoreDndBlob();
@@ -323,7 +416,37 @@ void WinFireflyBackend::stop() {
 
 void WinFireflyBackend::set_led(bool on) {
   if (!impl_) return;
-  impl_->led_ok.store(SetCapsLockLed(on));
+  bool ok = SetCapsLockLed(on);
+  if (!ok) ok = SetCapsLockLedKeyboardState(on);
+  impl_->led_ok.store(ok);
+}
+
+bool WinFireflyBackend::led_for_active() const {
+  if (!impl_) return true;
+  if (impl_->caps_mode == kFireflyCapsLowercase) return false;
+  return true;
+}
+
+bool WinFireflyBackend::led_for_inactive() const {
+  if (!impl_) return false;
+  if (impl_->caps_mode == kFireflyCapsPreserve && impl_->saved_caps_valid) return impl_->saved_caps;
+  if (impl_->caps_mode == kFireflyCapsLowercase) return true;
+  return false;
+}
+
+void WinFireflyBackend::apply_led_for_state(bool active) {
+  set_led(active ? led_for_active() : led_for_inactive());
+}
+
+void WinFireflyBackend::set_caps_mode(const std::string& mode) {
+  if (!impl_) return;
+  const bool was_active = impl_->active.load();
+  impl_->caps_mode = mode;
+  if (mode == kFireflyCapsPreserve && !impl_->saved_caps_valid) {
+    impl_->saved_caps = GetCapsLockState();
+    impl_->saved_caps_valid = true;
+  }
+  apply_led_for_state(was_active);
 }
 
 void WinFireflyBackend::set_dnd(bool on) {
@@ -347,7 +470,7 @@ void WinFireflyBackend::handle_toggle() {
   bool cur = impl_->active.load();
   bool next = !cur;
   impl_->active.store(next);
-  set_led(next);
+  apply_led_for_state(next);
   set_dnd(next);
   if (impl_->on_toggle) impl_->on_toggle();
 }

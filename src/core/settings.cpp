@@ -85,6 +85,11 @@ std::string normalize_led_mode(const std::string& v) {
   return kFireflyLedAuto;
 }
 
+std::string normalize_caps_mode(const std::string& v) {
+  if (v == kFireflyCapsPreserve || v == kFireflyCapsLowercase) return v;
+  return kFireflyCapsUppercase;
+}
+
 Settings normalize_settings(const Settings& raw) {
   Settings s = raw;
   s.display_mode = normalize_display_mode(s.display_mode);
@@ -92,6 +97,7 @@ Settings normalize_settings(const Settings& raw) {
   s.gradient_width = clamp_width(s.gradient_width);
   s.language = normalize_language(s.language);
   s.firefly_led_mode = normalize_led_mode(s.firefly_led_mode);
+  s.firefly_caps_mode = normalize_caps_mode(s.firefly_caps_mode);
   if (s.display_mode != kDisplayModeOnFocus) s.show_on_hover = false;
   return s;
 }
@@ -138,6 +144,9 @@ bool load_settings(Settings& out) {
   if (const auto* v = root.find("firefly_led_mode")) {
     if (v->type == json::Value::Type::String) s.firefly_led_mode = v->string_value;
   }
+  if (const auto* v = root.find("firefly_caps_mode")) {
+    if (v->type == json::Value::Type::String) s.firefly_caps_mode = v->string_value;
+  }
   if (const auto* v = root.find("language")) {
     if (v->type == json::Value::Type::String) s.language = v->string_value;
   }
@@ -171,6 +180,7 @@ bool save_settings(const Settings& settings) {
       {"gradient_width", json::Value::make_number(static_cast<double>(s.gradient_width))},
       {"firefly_enabled", json::Value::make_bool(s.firefly_enabled)},
       {"firefly_led_mode", json::Value::make_string(s.firefly_led_mode)},
+      {"firefly_caps_mode", json::Value::make_string(s.firefly_caps_mode)},
       {"language", json::Value::make_string(s.language)},
   });
   std::ofstream f(settings_path());

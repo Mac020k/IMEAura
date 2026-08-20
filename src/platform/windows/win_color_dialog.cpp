@@ -58,7 +58,7 @@ class ColorDialogUi {
     RECT owner_rc{};
     GetWindowRect(owner, &owner_rc);
     const int w = 500;
-    const int h = 360;
+    const int h = 280;
     const int x = owner_rc.left + ((owner_rc.right - owner_rc.left) - w) / 2;
     const int y = owner_rc.top + ((owner_rc.bottom - owner_rc.top) - h) / 2;
 

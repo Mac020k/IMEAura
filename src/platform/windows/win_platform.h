@@ -45,7 +45,7 @@ class WinPlatformBackend : public PlatformBackend {
   static void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD event, HWND, LONG idObject, LONG idChild, DWORD,
                                     DWORD);
 
-  void update_state();
+  void update_state(bool force = false);
   void on_display_changed();
   void recreate_overlay();
   void sync_text_watchers();

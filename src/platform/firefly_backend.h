@@ -1,7 +1,10 @@
 #pragma once
 
+#include "core/firefly.h"
+
 #include <functional>
 #include <memory>
+#include <string>
 
 namespace imeaura {
 
@@ -16,7 +19,7 @@ class FireflyBackend {
  public:
   virtual ~FireflyBackend() = default;
   virtual FireflyCaps caps() const = 0;
-  virtual bool start(std::function<void()> on_toggle) = 0;
+  virtual bool start(std::function<void()> on_toggle, const std::string& caps_mode = kFireflyCapsUppercase) = 0;
   virtual void stop() = 0;
   virtual void set_led(bool on) = 0;
   virtual void set_dnd(bool on) = 0;
