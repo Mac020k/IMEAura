@@ -3,7 +3,6 @@ add_library(imeaura_core STATIC
   core/settings.cpp
   core/policy.cpp
   core/i18n.cpp
-  core/firefly.cpp
 )
 target_include_directories(imeaura_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 

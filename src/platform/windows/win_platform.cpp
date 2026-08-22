@@ -1,9 +1,7 @@
 #include "platform/windows/win_platform.h"
 
 #include "core/i18n.h"
-#include "platform/firefly_backend.h"
 #include "platform/windows/win_comp_edges.h"
-#include "platform/windows/win_firefly.h"
 #include "platform/windows/win_ime.h"
 #include "platform/windows/win_settings_api.h"
 #include "platform/windows/win_tray.h"
@@ -12,8 +10,6 @@
 #include <shellscalingapi.h>
 #include <shobjidl.h>
 #include <wtsapi32.h>
-
-#include <memory>
 
 namespace imeaura {
 namespace {
@@ -28,14 +24,11 @@ constexpr UINT kRefreshMessage = WM_APP + 2;
 constexpr int kCmdOpenSettings = 1001;
 constexpr int kCmdQuit = 1002;
 
-constexpr UINT kFireflyToggleMsg = WM_APP + 100;
-
 WinPlatformBackend* g_self = nullptr;
 WinCompEdges g_edges;
 WinTray g_tray;
 HINSTANCE g_instance = nullptr;
 HWND g_app_hwnd = nullptr;
-std::unique_ptr<WinFireflyBackend> g_firefly;
 
 Rect MonitorRectFromHMONITOR(HMONITOR mon) {
   MONITORINFO mi{};
@@ -91,17 +84,6 @@ void ShowEdgeHosts(const std::array<HWND, kEdgeHostCount>& hosts) {
   for (HWND host : hosts) {
     if (host) ShowWindow(host, SW_SHOWNOACTIVATE);
   }
-}
-
-void NotifyFireflyStateChanged() {
-  win_settings::set_firefly_active(g_firefly && g_firefly->is_active());
-}
-
-auto MakeFireflyToggleCallback(WinPlatformBackend* self) {
-  return [self] {
-    if (g_app_hwnd) PostMessageW(g_app_hwnd, kRefreshMessage, 0, 0);
-    NotifyFireflyStateChanged();
-  };
 }
 
 }  // namespace
@@ -180,34 +162,13 @@ bool WinPlatformBackend::init() {
   }
 
   if (!win_settings::create(g_instance, settings_, [this](const Settings& s) {
-        const bool was_ff = settings_.firefly_enabled;
-        const std::string prev_caps_mode = settings_.firefly_caps_mode;
         settings_ = s;
         save_settings(settings_);
         notify_settings_changed(settings_);
         sync_text_watchers();
-        if (s.firefly_enabled && !was_ff) {
-          if (!g_firefly) g_firefly = std::make_unique<WinFireflyBackend>();
-          g_firefly->set_target_hwnd(g_app_hwnd);
-          g_firefly->start(MakeFireflyToggleCallback(this), s.firefly_caps_mode);
-          NotifyFireflyStateChanged();
-        } else if (!s.firefly_enabled && was_ff && g_firefly) {
-          g_firefly->stop();
-          g_firefly.reset();
-          win_settings::set_firefly_active(false);
-        } else if (s.firefly_enabled && was_ff && g_firefly && s.firefly_caps_mode != prev_caps_mode) {
-          g_firefly->set_caps_mode(s.firefly_caps_mode);
-        }
         update_state(true);
       })) {
     return false;
-  }
-
-  if (settings_.firefly_enabled) {
-    g_firefly = std::make_unique<WinFireflyBackend>();
-    g_firefly->set_target_hwnd(g_app_hwnd);
-    g_firefly->start(MakeFireflyToggleCallback(this), settings_.firefly_caps_mode);
-    NotifyFireflyStateChanged();
   }
 
   sync_text_watchers();
@@ -232,11 +193,6 @@ void WinPlatformBackend::shutdown() {
   unhook(foreground_hook_);
   unhook(focus_hook_);
   unhook(ime_hook_);
-  if (g_firefly) {
-    g_firefly->stop();
-    g_firefly.reset();
-    win_settings::set_firefly_active(false);
-  }
   g_edges.shutdown();
   g_tray.destroy();
   win_ime_worker_stop();
@@ -405,9 +361,6 @@ LRESULT CALLBACK WinPlatformBackend::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPA
       return 0;
     case kRefreshMessage:
       self->update_state();
-      return 0;
-    case kFireflyToggleMsg:
-      if (g_firefly) g_firefly->handle_toggle();
       return 0;
     case WM_TIMER:
       if (wp == kPollTimerId) {

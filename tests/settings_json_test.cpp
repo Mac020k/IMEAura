@@ -55,23 +55,12 @@ int main() {
   loaded = normalize_settings(raw);
   EXPECT(!loaded.show_on_hover);
 
-  // Firefly fields
-  raw.firefly_enabled = true;
-  raw.firefly_led_mode = "hid";
-  raw.firefly_caps_mode = "preserve";
   raw.language = "en";
   loaded = normalize_settings(raw);
-  EXPECT(loaded.firefly_enabled);
-  EXPECT(loaded.firefly_led_mode == "hid");
-  EXPECT(loaded.firefly_caps_mode == "preserve");
   EXPECT(loaded.language == "en");
 
-  raw.firefly_led_mode = "invalid";
-  raw.firefly_caps_mode = "invalid";
   raw.language = "zz";
   loaded = normalize_settings(raw);
-  EXPECT(loaded.firefly_led_mode == "auto");
-  EXPECT(loaded.firefly_caps_mode == "uppercase");
   EXPECT(loaded.language == "ja");
 
   (void)path;

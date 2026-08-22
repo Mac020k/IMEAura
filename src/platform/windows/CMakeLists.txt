@@ -12,7 +12,6 @@ add_library(imeaura_platform STATIC
   win_color_dialog.cpp
   win_about.cpp
   win_settings.cpp
-  win_firefly.cpp
 )
 
 target_include_directories(imeaura_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
@@ -24,5 +23,5 @@ set_property(TARGET imeaura_platform PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreade
 
 target_link_libraries(imeaura_platform PRIVATE
   user32 gdi32 imm32 shell32 ole32 oleaut32 dwmapi windowsapp comctl32 shcore comdlg32
-  UIAutomationCore d2d1 dwrite wtsapi32 hid setupapi advapi32
+  UIAutomationCore d2d1 dwrite wtsapi32 advapi32
 )

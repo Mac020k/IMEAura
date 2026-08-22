@@ -47,6 +47,7 @@ Defined in `src/core/settings.{h,cpp}`:
 - `show_on_hover`: boolean (forced false unless `on_focus`)
 - `ui_font_size`: `small` | `medium` | `large`
 - `gradient_width`: 1–100
+- `language`: `ja` | `en`
 
 Paths:
 

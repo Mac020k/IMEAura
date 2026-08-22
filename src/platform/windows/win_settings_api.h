@@ -14,6 +14,5 @@ void hide();
 bool visible();
 HWND hwnd();
 void sync(const Settings& settings);
-void set_firefly_active(bool active);
 
 }  // namespace imeaura::win_settings
