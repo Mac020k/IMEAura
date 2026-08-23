@@ -25,7 +25,7 @@ The app is a native **C++20** project. Overlays and settings UIs use each OS’s
 - Display modes: Always / Only while typing / Hidden (+ optional hover)
 - Tabbed settings (Aura / Firefly / General) with Japanese and English UI
 - Tray / menu-bar icon — closing settings hides the window; the app keeps running
-- **Firefly** (Windows): CapsLock as Available / Busy (Do Not Disturb) with LED + Quiet Hours
+- **Firefly**: CapsLock as Available / Busy (Do Not Disturb) with LED + notification suppression (Windows, macOS, Linux/X11)
 
 ## Install
 
@@ -119,22 +119,28 @@ Stored as JSON (`src/core/settings.{h,cpp}`):
 | `firefly_caps_mode` | `preserve` \| `uppercase` \| `lowercase` | `uppercase` |
 | `firefly_led_mode` | `auto` \| `hid` \| `none` | `auto` |
 
-## Firefly (Windows)
+## Firefly (Windows, macOS, Linux/X11)
 
 Firefly remaps the physical **CapsLock** key to an Available / Busy (Do Not Disturb) toggle while IME Aura is running.
 
 | State | Meaning | CapsLock LED (if LED control is on) | Notifications |
 | --- | --- | --- | --- |
 | **Available** | Default after enable | Off | Normal |
-| **Busy** | After CapsLock press | On | Suppressed (Focus Assist / Quiet Hours) |
+| **Busy** | After CapsLock press | On | Suppressed |
 
 - Enabling Firefly always starts in **Available**.
 - Each CapsLock press toggles Available ↔ Busy.
 - While Firefly is on, CapsLock no longer toggles system letter case; case follows `firefly_caps_mode`.
-- Disabling Firefly restores the previous CapsLock and Quiet Hours settings when possible.
-- Fail-closed: if the low-level keyboard hook cannot be installed, enable is refused and the UI toggle stays off.
+- Disabling Firefly restores the previous CapsLock and DND settings when possible.
+- Fail-closed: if the platform intercept cannot be installed, enable is refused (`firefly_enabled` cleared).
 
-Other platforms have no Firefly backend (`create_firefly_backend()` returns `nullptr`).
+| Platform | Intercept | LED | DND |
+| --- | --- | --- | --- |
+| **Windows** | `WH_KEYBOARD_LL` | CapsLock bit / HID | Registry Quiet Hours |
+| **macOS** | `CGEventTap` (Accessibility permission) | CapsLock state | `defaults` Notification Center UI |
+| **Linux** | X11 `XGrabKey` + XTest | sysfs or XKB indicator | GNOME `gsettings` (when writable) |
+
+See [docs/firefly.md](docs/firefly.md) for architecture and per-OS requirements. On macOS and Linux, configure Firefly via `settings.json` until settings UI parity lands.
 
 ### CapsLock state (`firefly_caps_mode`)
 
@@ -150,8 +156,8 @@ Japanese IME composition is passed through. Ctrl / Alt / Win shortcuts are not r
 
 | Value | Effect |
 | --- | --- |
-| `auto` | Prefer native CapsLock LED as Busy lamp; HID as fallback |
-| `hid` | Drive LED via HID output report only |
+| `auto` | Prefer native CapsLock LED as Busy lamp; on Linux also tries sysfs `*capslock` |
+| `hid` | Drive LED via HID/sysfs only (Windows HID report; Linux sysfs) |
 | `none` | Do not drive CapsLock LED for Busy / Available |
 
 On Windows, CapsLock LED and letter case share one toggle bit. Firefly’s default path uses that bit as the Busy lamp and rewrites Latin A–Z so case follows `firefly_caps_mode` XOR Shift.

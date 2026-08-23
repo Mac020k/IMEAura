@@ -6,8 +6,10 @@
 #include "platform/windows/win_firefly.h"
 #elif defined(__APPLE__)
 #include "platform/macos/mac_platform.h"
+#include "platform/macos/mac_firefly.h"
 #else
 #include "platform/linux/linux_platform.h"
+#include "platform/linux/linux_firefly.h"
 #endif
 
 namespace imeaura {
@@ -25,8 +27,10 @@ std::unique_ptr<PlatformBackend> create_platform_backend() {
 std::unique_ptr<FireflyBackend> create_firefly_backend() {
 #ifdef _WIN32
   return std::make_unique<WinFireflyBackend>();
+#elif defined(__APPLE__)
+  return std::make_unique<MacFireflyBackend>();
 #else
-  return nullptr;
+  return std::make_unique<LinuxFireflyBackend>();
 #endif
 }
 

@@ -26,6 +26,7 @@ class FireflyBackend {
   virtual void set_led(bool on) = 0;
   virtual void set_dnd(bool on) = 0;
   virtual bool is_active() const = 0;  // Busy when true
+  virtual void poll() {}  // Optional event pump (Linux X11)
 };
 
 std::unique_ptr<FireflyBackend> create_firefly_backend();
