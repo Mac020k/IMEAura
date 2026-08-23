@@ -4,9 +4,12 @@
 #include "platform/macos/mac_ime.h"
 
 #include <CoreFoundation/CoreFoundation.h>
+#include <CoreGraphics/CoreGraphics.h>
 #include <dispatch/dispatch.h>
 
 #include <atomic>
+#include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -135,7 +138,7 @@ CGEventRef EventTapCallback(CGEventTapProxy, CGEventType type, CGEventRef event,
 
   if (type != kCGEventKeyDown && type != kCGEventKeyUp) return event;
 
-  const CGKeyCode key = static_cast<CGKeyCode>(CGEventGetIntegerValueField(event, kCGEventKeyKeyCode));
+  const CGKeyCode key = static_cast<CGKeyCode>(CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode));
   const bool down = type == kCGEventKeyDown;
 
   if (key == kVkCapsLock) {
@@ -147,19 +150,31 @@ CGEventRef EventTapCallback(CGEventTapProxy, CGEventType type, CGEventRef event,
     return nullptr;
   }
 
-  if (key >= 0x00 && key <= 0x19) {  // A-Z on macOS virtual keycodes
-    if (!ModifiersDown() && !mac_is_japanese_input()) {
-      if (down && g_self) {
-        const bool upper = firefly_want_uppercase(g_self->caps_mode_for_remap(), ShiftDown(),
-                                                  g_self->preserved_caps_for_remap());
-        const wchar_t ch = static_cast<wchar_t>((upper ? L'A' : L'a') + (key - 0x00));
-        CFStringRef s = CFStringCreateWithCharacters(nullptr, reinterpret_cast<const UniChar*>(&ch), 1);
+  // macOS letter keycodes are not contiguous A..Z; map known ANSI codes explicitly.
+  static constexpr CGKeyCode kLetterKeys[26] = {
+      0x00, 0x0B, 0x08, 0x02, 0x0E, 0x03, 0x05, 0x04, 0x22, 0x26, 0x28, 0x25, 0x2E,
+      0x2D, 0x1F, 0x23, 0x0C, 0x0F, 0x01, 0x11, 0x20, 0x09, 0x0D, 0x07, 0x10, 0x06,
+  };
+  int letter = -1;
+  for (int i = 0; i < 26; ++i) {
+    if (kLetterKeys[i] == key) {
+      letter = i;
+      break;
+    }
+  }
+  if (letter >= 0 && !ModifiersDown() && !mac_is_japanese_input()) {
+    if (down && g_self) {
+      const bool upper = firefly_want_uppercase(g_self->caps_mode_for_remap(), ShiftDown(),
+                                                g_self->preserved_caps_for_remap());
+      const UniChar ch = static_cast<UniChar>((upper ? 'A' : 'a') + letter);
+      CFStringRef s = CFStringCreateWithCharacters(nullptr, &ch, 1);
+      if (s) {
         SendUnicodeChar(s, true);
         SendUnicodeChar(s, false);
         CFRelease(s);
       }
-      return nullptr;
     }
+    return nullptr;
   }
 
   return event;
