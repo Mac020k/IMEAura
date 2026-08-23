@@ -1,8 +1,6 @@
 #include "core/json.h"
 
 #include <cctype>
-#include <charconv>
-#include <map>
 #include <sstream>
 
 namespace imeaura::json {
@@ -69,27 +67,24 @@ bool parse_array(std::string_view s, size_t& i, Value& out, std::string& error) 
   ++i;
   skip_ws(s, i);
   out = Value::make_array({});
-  if (i < s.size() && s[i] == ']') { ++i; return true; }
+  if (i < s.size() && s[i] == ']') {
+    ++i;
+    return true;
+  }
   while (i < s.size()) {
     Value item;
     if (!parse_value(s, i, item, error)) return false;
-    if (item.type == Value::Type::Number) {
-      Value::ArrayItem ai;
-      ai.kind = Value::ArrayItem::Number;
-      ai.number = item.number_value;
-      out.array_items.push_back(ai);
-    } else if (item.type == Value::Type::String) {
-      Value::ArrayItem ai;
-      ai.kind = Value::ArrayItem::String;
-      ai.str = item.string_value;
-      out.array_items.push_back(ai);
-    } else {
-      error = "unsupported array element";
-      return false;
-    }
+    out.elements.push_back(std::move(item));
     skip_ws(s, i);
-    if (i < s.size() && s[i] == ',') { ++i; skip_ws(s, i); continue; }
-    if (i < s.size() && s[i] == ']') { ++i; return true; }
+    if (i < s.size() && s[i] == ',') {
+      ++i;
+      skip_ws(s, i);
+      continue;
+    }
+    if (i < s.size() && s[i] == ']') {
+      ++i;
+      return true;
+    }
     error = "expected , or ]";
     return false;
   }
@@ -101,20 +96,36 @@ bool parse_object(std::string_view s, size_t& i, Value& out, std::string& error)
   ++i;
   skip_ws(s, i);
   out = Value::make_object({});
-  if (i < s.size() && s[i] == '}') { ++i; return true; }
+  if (i < s.size() && s[i] == '}') {
+    ++i;
+    return true;
+  }
   while (i < s.size()) {
     std::string key;
-    if (!parse_string(s, i, key)) { error = "expected key"; return false; }
+    if (!parse_string(s, i, key)) {
+      error = "expected key";
+      return false;
+    }
     skip_ws(s, i);
-    if (i >= s.size() || s[i] != ':') { error = "expected :"; return false; }
+    if (i >= s.size() || s[i] != ':') {
+      error = "expected :";
+      return false;
+    }
     ++i;
     skip_ws(s, i);
     Value val;
     if (!parse_value(s, i, val, error)) return false;
     out.object_entries.emplace(std::move(key), std::move(val));
     skip_ws(s, i);
-    if (i < s.size() && s[i] == ',') { ++i; skip_ws(s, i); continue; }
-    if (i < s.size() && s[i] == '}') { ++i; return true; }
+    if (i < s.size() && s[i] == ',') {
+      ++i;
+      skip_ws(s, i);
+      continue;
+    }
+    if (i < s.size() && s[i] == '}') {
+      ++i;
+      return true;
+    }
     error = "expected , or }";
     return false;
   }
@@ -123,18 +134,36 @@ bool parse_object(std::string_view s, size_t& i, Value& out, std::string& error)
 
 bool parse_value(std::string_view s, size_t& i, Value& out, std::string& error) {
   skip_ws(s, i);
-  if (i >= s.size()) { error = "unexpected end"; return false; }
+  if (i >= s.size()) {
+    error = "unexpected end";
+    return false;
+  }
   if (s[i] == '"') {
     out = Value::make_string("");
     return parse_string(s, i, out.string_value);
   }
   if (s[i] == '{') return parse_object(s, i, out, error);
   if (s[i] == '[') return parse_array(s, i, out, error);
-  if (s.substr(i, 4) == "true") { out = Value::make_bool(true); i += 4; return true; }
-  if (s.substr(i, 5) == "false") { out = Value::make_bool(false); i += 5; return true; }
-  if (s.substr(i, 4) == "null") { out.type = Value::Type::Null; i += 4; return true; }
+  if (s.substr(i, 4) == "true") {
+    out = Value::make_bool(true);
+    i += 4;
+    return true;
+  }
+  if (s.substr(i, 5) == "false") {
+    out = Value::make_bool(false);
+    i += 5;
+    return true;
+  }
+  if (s.substr(i, 4) == "null") {
+    out.type = Value::Type::Null;
+    i += 4;
+    return true;
+  }
   double num = 0;
-  if (parse_number(s, i, num)) { out = Value::make_number(num); return true; }
+  if (parse_number(s, i, num)) {
+    out = Value::make_number(num);
+    return true;
+  }
   error = "invalid token";
   return false;
 }
@@ -162,10 +191,10 @@ Value Value::make_string(std::string v) {
   return x;
 }
 
-Value Value::make_array(std::vector<ArrayItem> items) {
+Value Value::make_array(std::vector<Value> items) {
   Value x;
   x.type = Type::Array;
-  x.array_items = std::move(items);
+  x.elements = std::move(items);
   return x;
 }
 
@@ -188,7 +217,10 @@ bool parse(std::string_view text, Value& out, std::string& error) {
   skip_ws(text, i);
   if (!parse_value(text, i, out, error)) return false;
   skip_ws(text, i);
-  if (i != text.size()) { error = "trailing content"; return false; }
+  if (i != text.size()) {
+    error = "trailing content";
+    return false;
+  }
   return true;
 }
 
@@ -199,16 +231,24 @@ static void indent_stream(std::ostringstream& os, int n) {
 static void stringify_impl(const Value& v, std::ostringstream& os, int depth);
 
 static void stringify_array(const Value& v, std::ostringstream& os, int depth) {
-  os << '[';
-  for (size_t i = 0; i < v.array_items.size(); ++i) {
-    if (i) os << ", ";
-    const auto& item = v.array_items[i];
-    if (item.kind == Value::ArrayItem::Number) {
-      os << static_cast<int>(item.number);
-    } else {
-      os << '"' << item.str << '"';
+  const bool nested = !v.elements.empty() && (v.elements.front().type == Value::Type::Object ||
+                                              v.elements.front().type == Value::Type::Array);
+  if (!nested) {
+    os << '[';
+    for (size_t i = 0; i < v.elements.size(); ++i) {
+      if (i) os << ", ";
+      stringify_impl(v.elements[i], os, depth);
     }
+    os << ']';
+    return;
   }
+  os << "[\n";
+  for (size_t i = 0; i < v.elements.size(); ++i) {
+    indent_stream(os, depth + 2);
+    stringify_impl(v.elements[i], os, depth + 2);
+    os << (i + 1 < v.elements.size() ? ",\n" : "\n");
+  }
+  indent_stream(os, depth);
   os << ']';
 }
 
@@ -227,12 +267,24 @@ static void stringify_object(const Value& v, std::ostringstream& os, int depth) 
 
 static void stringify_impl(const Value& v, std::ostringstream& os, int depth) {
   switch (v.type) {
-    case Value::Type::Null: os << "null"; break;
-    case Value::Type::Bool: os << (v.bool_value ? "true" : "false"); break;
-    case Value::Type::Number: os << static_cast<int>(v.number_value); break;
-    case Value::Type::String: os << '"' << v.string_value << '"'; break;
-    case Value::Type::Array: stringify_array(v, os, depth); break;
-    case Value::Type::Object: stringify_object(v, os, depth); break;
+    case Value::Type::Null:
+      os << "null";
+      break;
+    case Value::Type::Bool:
+      os << (v.bool_value ? "true" : "false");
+      break;
+    case Value::Type::Number:
+      os << static_cast<int>(v.number_value);
+      break;
+    case Value::Type::String:
+      os << '"' << v.string_value << '"';
+      break;
+    case Value::Type::Array:
+      stringify_array(v, os, depth);
+      break;
+    case Value::Type::Object:
+      stringify_object(v, os, depth);
+      break;
   }
 }
 

@@ -5,10 +5,12 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 
 namespace imeaura {
 
 struct ProbeState {
+  std::string ime_lang = "en";
   bool ime_japanese = false;
   bool text_focused = false;
   bool text_hovered = false;
@@ -26,7 +28,8 @@ class PlatformBackend {
   virtual int run() = 0;
 
   virtual bool prefers_reduced_motion() = 0;
-  virtual bool is_japanese_input() = 0;
+  virtual std::string active_input_language() = 0;
+  virtual bool is_japanese_input() { return active_input_language() == "ja"; }
   virtual bool is_text_input_focused() = 0;
   virtual bool is_text_input_hovered() = 0;
   virtual Rect get_active_monitor_rect() = 0;

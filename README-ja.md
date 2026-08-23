@@ -6,7 +6,7 @@
 
 [English](README.md)
 
-**IME Aura** は、ディスプレイの端にさりげないグラデーションを描画し、IME 入力が日本語か英語かを示す軽量デスクトップユーティリティです。入力モードの取り違えを防ぐのに役立ちます。
+**IME Aura** は、ディスプレイの端にさりげないグラデーションを描画し、アクティブな IME / 入力言語 (日本語・中国語・韓国語・Latin) を示す軽量デスクトップユーティリティです。入力モードの取り違えを防ぐのに役立ちます。
 
 アプリはネイティブの **C++20** プロジェクトです。オーバーレイと設定 UI は各 OS のネイティブ API を使用します。
 
@@ -21,9 +21,11 @@
 - プラットフォーム API によるリアルタイム IME 状態検知
 - クリック透過の端オーバーレイ (常に最前面)
 - マルチモニタ追従 (アクティブウィンドウ; ホバー時のみの場合はカーソル)
-- JP / EN のカスタム色 (アルファ付き); グラデーション幅 1–100 px
+- 言語ごとの端の色 (最大7スロット; Phase 1: ja / zh-Hans / zh-Hant / ko / en); グラデーション幅 1–100 px
 - 表示モード: 常に表示 / 入力中のみ / 非表示 (+ 任意のホバー表示)
-- タブ付き設定 (Aura / Firefly / 一般) — UI は日本語・英語対応
+- タブ付き設定 (Aura / Firefly / 一般) — UI は日本語・英語・簡体/繁体中国語・韓国語
+- 一般タブの言語ピッカーページ; Aura の色行は言語ドロップダウン
+- 将来の IME 言語候補: [docs/ime-languages.md](docs/ime-languages.md)
 - トレイ / メニューバーアイコン — 設定を閉じてもウィンドウは隠れるだけでアプリは継続動作
 - **Firefly**: CapsLock を Available / Busy (おやすみモード) に割当 — LED + 通知抑制 (Windows / macOS / Linux/X11)
 
@@ -109,15 +111,18 @@ JSON として保存されます (`src/core/settings.{h,cpp}`):
 
 | キー | 値 | 既定 |
 | --- | --- | --- |
-| `color_jp` / `color_en` | `[r,g,b,a]` 0–255 | JP 赤系 / EN 青 |
+| `aura_colors` | `[{"lang":"ja\|zh-Hans\|zh-Hant\|ko\|en","color":[r,g,b,a]}, …]` (2–7) | ja + en 既定 |
+| `color_jp` / `color_en` | `[r,g,b,a]` 0–255 | 互換用に保存; 優先は `aura_colors` |
 | `display_mode` | `always` \| `on_focus` \| `hidden` | `always` |
 | `show_on_hover` | bool (`on_focus` 時のみ) | `false` |
 | `ui_font_size` | `small` \| `medium` \| `large` | `medium` |
 | `gradient_width` | 1–100 | `15` |
-| `language` | `ja` \| `en` | `ja` |
+| `language` | `ja` \| `en` \| `zh-Hans` \| `zh-Hant` \| `ko` | `ja` |
 | `firefly_enabled` | bool | `false` |
 | `firefly_caps_mode` | `preserve` \| `uppercase` \| `lowercase` | `uppercase` |
 | `firefly_led_mode` | `auto` \| `hid` \| `none` | `auto` |
+
+色スロットを ja/en の次に追加すると、既定色は順に `#16CC7B`、`#F1D60F`、`#E6690C`、`#7E43D5`、`#636363` です。
 
 ## Firefly (Windows / macOS / Linux/X11)
 

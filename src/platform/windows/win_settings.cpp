@@ -2,6 +2,7 @@
 
 #include "core/firefly.h"
 #include "core/i18n.h"
+#include "core/input_languages.h"
 #include "core/tokens.h"
 #include "platform/windows/win_about.h"
 #include "platform/windows/win_color_dialog.h"
@@ -42,14 +43,13 @@ constexpr UINT kTabAnimFrameMs = 16;
 constexpr float kTabAnimDurationMs = 200.f;
 
 enum class Tab { Aura, Firefly, General };
+enum class Page { Main, LangPicker };
 
 enum class Hit : int {
   None = 0,
   TabAura,
   TabFirefly,
   TabGeneral,
-  JpSwatch,
-  EnSwatch,
   ResetColors,
   WidthTrack,
   WidthValue,
@@ -61,8 +61,8 @@ enum class Hit : int {
   FontSmall,
   FontMedium,
   FontLarge,
-  LangJa,
-  LangEn,
+  LangChange,
+  LangBack,
   About,
   Quit,
   ScrollBar,
@@ -70,6 +70,11 @@ enum class Hit : int {
   FireflyCapsPreserve,
   FireflyCapsUppercase,
   FireflyCapsLowercase,
+  AddSlot,
+  SlotLang0 = 100,
+  SlotSwatch0 = 200,
+  SlotRemove0 = 300,
+  LangPick0 = 400,
 };
 
 enum class AlignH { Left, Center };
@@ -646,15 +651,42 @@ class SettingsUi {
     rt_->PushAxisAlignedClip(D2D1::RectF(0, static_cast<float>(tab_h), w, h), D2D1_ANTIALIAS_MODE_ALIASED);
     rt_->SetTransform(D2D1::Matrix3x2F::Translation(0, static_cast<float>(tab_h) - static_cast<float>(scroll_y_)));
 
-    if (active_tab_ == Tab::Aura) {
+    if (page_ == Page::LangPicker) {
+      draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kLangSection), r2f(lang_picker_title_), C(kUiText));
+      fill_round(rt_.Get(), r2f(lang_back_), dip(10), hover_ == Hit::LangBack ? C(kUiFillHover) : C(kUiFill));
+      draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kLangBack), r2f(lang_back_), C(kUiText), AlignH::Center,
+                AlignV::Center);
+      size_t n = 0;
+      const auto* cat = input_language_catalog(n);
+      for (size_t i = 0; i < n && i < lang_pick_rows_.size(); ++i) {
+        const bool on = settings_.language == cat[i].id;
+        paint_radio(lang_pick_rows_[i], on, tr(lang(), string_id_for_ui_lang(cat[i].id)), body_fmt.Get());
+      }
+    } else if (active_tab_ == Tab::Aura) {
 
     draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kColorSection), r2f(sec_color_title_), C(kUiText));
     draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kColorSub), r2f(sec_color_sub_),
               C(kUiTextSecondary));
-    draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kColorJp), r2f(jp_label_), C(kUiText), AlignH::Left, AlignV::Center);
-    draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kColorEn), r2f(en_label_), C(kUiText), AlignH::Left, AlignV::Center);
-    paint_swatch(jp_swatch_, settings_.color_jp, hover_ == Hit::JpSwatch);
-    paint_swatch(en_swatch_, settings_.color_en, hover_ == Hit::EnSwatch);
+    for (size_t i = 0; i < settings_.aura_slots.size() && i < slot_lang_.size(); ++i) {
+      const auto& slot = settings_.aura_slots[i];
+      const wchar_t* name = input_language_display_name(slot.lang_id, lang() != Lang::En);
+      draw_text(rt_.Get(), body_fmt.Get(), name, r2f(slot_lang_[i]), C(kUiText), AlignH::Left, AlignV::Center);
+      paint_swatch(slot_swatch_[i], slot.color,
+                   hover_ == static_cast<Hit>(static_cast<int>(Hit::SlotSwatch0) + static_cast<int>(i)));
+      if (settings_.aura_slots.size() > static_cast<size_t>(kMinAuraSlots)) {
+        draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kRemoveColorSlot), r2f(slot_remove_[i]),
+                  hover_ == static_cast<Hit>(static_cast<int>(Hit::SlotRemove0) + static_cast<int>(i))
+                      ? C(kUiDanger)
+                      : C(kUiTextSecondary),
+                  AlignH::Left, AlignV::Center);
+      }
+    }
+    if (static_cast<int>(settings_.aura_slots.size()) < kMaxAuraSlots) {
+      fill_round(rt_.Get(), r2f(add_slot_), dip(10),
+                 hover_ == Hit::AddSlot ? C(kUiFillHover) : C(kUiFill));
+      draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kAddColorSlot), r2f(add_slot_), C(kUiText),
+                AlignH::Center, AlignV::Center);
+    }
     draw_text(rt_.Get(), body_fmt.Get(),
               reset_colors_flash_ ? tr(lang(), StringId::kColorResetDone) : tr(lang(), StringId::kColorReset),
               r2f(reset_colors_), hover_ == Hit::ResetColors ? C(kDefaultColorEn) : C(kUiTextSecondary), AlignH::Left,
@@ -791,16 +823,18 @@ class SettingsUi {
       int gy = rule3_.top + dip(kUiSectionGap);
       RECT lang_title = box(m, gy, inner, um.title_h);
       gy += um.title_h + dip(kUiRowGap);
-      lang_ja_ = box(m, gy, inner, row);
-      gy += row + dip(kUiSpace1);
-      lang_en_ = box(m, gy, inner, row);
+      lang_change_ = box(m, gy, inner, row);
       gy += row + dip(kUiSectionGap);
       lang_rule_ = box(m, gy, inner, 1);
       gy += dip(kUiSectionGap);
 
       draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kLangSection), r2f(lang_title), C(kUiText));
-      paint_radio(lang_ja_, settings_.language == kLangJa, tr(lang(), StringId::kLangJa), body_fmt.Get());
-      paint_radio(lang_en_, settings_.language == kLangEn, tr(lang(), StringId::kLangEn), body_fmt.Get());
+      fill_round(rt_.Get(), r2f(lang_change_), dip(10),
+                 hover_ == Hit::LangChange ? C(kUiFillHover) : C(kUiFill));
+      wchar_t lang_btn[128];
+      swprintf_s(lang_btn, L"%s: %s", tr(lang(), StringId::kLangChange),
+                 tr(lang(), string_id_for_ui_lang(settings_.language)));
+      draw_text(rt_.Get(), body_fmt.Get(), lang_btn, r2f(lang_change_), C(kUiText), AlignH::Center, AlignV::Center);
       paint_rule(lang_rule_);
     }
 
@@ -979,6 +1013,28 @@ class SettingsUi {
     const int inner = content_width();
     const int radio_gap = dip(kUiSpace1);
 
+    slot_lang_.assign(kMaxAuraSlots, RECT{});
+    slot_swatch_.assign(kMaxAuraSlots, RECT{});
+    slot_remove_.assign(kMaxAuraSlots, RECT{});
+    lang_pick_rows_.clear();
+
+    if (page_ == Page::LangPicker) {
+      int y = m;
+      lang_picker_title_ = box(m, y, inner, um.title_h);
+      y += um.title_h + gap;
+      lang_back_ = box(m, y, inner, row);
+      y += row + sec;
+      size_t n = 0;
+      input_language_catalog(n);
+      for (size_t i = 0; i < n; ++i) {
+        lang_pick_rows_.push_back(box(m, y, inner, row));
+        y += row + radio_gap;
+      }
+      y += m;
+      content_height_ = y;
+      return;
+    }
+
     if (active_tab_ == Tab::Aura) {
       int y = m;
       sec_color_title_ = box(m, y, inner, um.title_h);
@@ -986,13 +1042,26 @@ class SettingsUi {
       sec_color_sub_ = box(m, y, inner, um.sub_h);
       y += um.sub_h + gap;
       const int color_row = std::max(row, um.swatch_h);
-      const int sw_w = std::min(um.swatch_w, inner * 35 / 100);
-      jp_label_ = box(m, y, std::max(1, inner - sw_w - gap), color_row);
-      jp_swatch_ = box(m + inner - sw_w, y + (color_row - um.swatch_h) / 2, sw_w, um.swatch_h);
-      y += color_row + gap;
-      en_label_ = box(m, y, std::max(1, inner - sw_w - gap), color_row);
-      en_swatch_ = box(m + inner - sw_w, y + (color_row - um.swatch_h) / 2, sw_w, um.swatch_h);
-      y += color_row + gap;
+      const int sw_w = std::min(um.swatch_w, inner * 30 / 100);
+      const int rem_w = dip(56);
+      for (size_t i = 0; i < settings_.aura_slots.size(); ++i) {
+        const bool can_remove = settings_.aura_slots.size() > static_cast<size_t>(kMinAuraSlots);
+        const int label_w = std::max(1, inner - sw_w - gap - (can_remove ? rem_w + gap : 0));
+        slot_lang_[i] = box(m, y, label_w, color_row);
+        slot_swatch_[i] = box(m + label_w + gap, y + (color_row - um.swatch_h) / 2, sw_w, um.swatch_h);
+        if (can_remove) {
+          slot_remove_[i] = box(m + label_w + gap + sw_w + gap, y, rem_w, color_row);
+        } else {
+          slot_remove_[i] = box(0, 0, 0, 0);
+        }
+        y += color_row + gap;
+      }
+      if (static_cast<int>(settings_.aura_slots.size()) < kMaxAuraSlots) {
+        add_slot_ = box(m, y, inner, row);
+        y += row + gap;
+      } else {
+        add_slot_ = box(0, 0, 0, 0);
+      }
       reset_colors_ = box(m, y, inner, row);
       y += row + sec;
       rule1_ = box(m, y, inner, 1);
@@ -1026,6 +1095,8 @@ class SettingsUi {
       mode_hidden_ = box(m, y, inner, row);
       y += row + m;
       content_height_ = y;
+    } else if (active_tab_ == Tab::Firefly) {
+      // Firefly layout computed during paint
     } else {
       int y = m;
       sec_font_title_ = box(m, y, inner, um.title_h);
@@ -1042,8 +1113,7 @@ class SettingsUi {
       y += um.font_bar_h + sec;
       rule3_ = box(m, y, inner, 1);
       y += sec;
-      // Language section positions are computed inline during paint
-      y += um.title_h + gap + row + radio_gap + row + sec;
+      y += um.title_h + gap + row + sec;
       lang_rule_ = box(m, y, inner, 1);
       y += sec;
       rule4_ = box(m, y, inner, 1);
@@ -1061,19 +1131,37 @@ class SettingsUi {
   }
 
   Hit hit_test(int x, int y) const {
-    if (contains(tab_aura_, x, y)) return Hit::TabAura;
-    if (contains(tab_firefly_, x, y)) return Hit::TabFirefly;
-    if (contains(tab_general_, x, y)) return Hit::TabGeneral;
+    if (page_ != Page::LangPicker) {
+      if (contains(tab_aura_, x, y)) return Hit::TabAura;
+      if (contains(tab_firefly_, x, y)) return Hit::TabFirefly;
+      if (contains(tab_general_, x, y)) return Hit::TabGeneral;
+    }
 
     const int tab_h = dip(kUiTabBarHeight);
-    if (y < tab_h) return Hit::None;
-    const int cy = y - tab_h + scroll_y_;
+    if (page_ != Page::LangPicker && y < tab_h) return Hit::None;
+    const int cy = (page_ == Page::LangPicker) ? (y - tab_h + scroll_y_) : (y - tab_h + scroll_y_);
 
     if (scroll_max_ > 0 && contains(scroll_bar_, x, y)) return Hit::ScrollBar;
 
+    if (page_ == Page::LangPicker) {
+      if (contains(lang_back_, x, cy)) return Hit::LangBack;
+      for (size_t i = 0; i < lang_pick_rows_.size(); ++i) {
+        if (contains(lang_pick_rows_[i], x, cy))
+          return static_cast<Hit>(static_cast<int>(Hit::LangPick0) + static_cast<int>(i));
+      }
+      return Hit::None;
+    }
+
     if (active_tab_ == Tab::Aura) {
-      if (contains(jp_swatch_, x, cy)) return Hit::JpSwatch;
-      if (contains(en_swatch_, x, cy)) return Hit::EnSwatch;
+      for (size_t i = 0; i < settings_.aura_slots.size(); ++i) {
+        if (contains(slot_lang_[i], x, cy))
+          return static_cast<Hit>(static_cast<int>(Hit::SlotLang0) + static_cast<int>(i));
+        if (contains(slot_swatch_[i], x, cy))
+          return static_cast<Hit>(static_cast<int>(Hit::SlotSwatch0) + static_cast<int>(i));
+        if (slot_remove_[i].right > slot_remove_[i].left && contains(slot_remove_[i], x, cy))
+          return static_cast<Hit>(static_cast<int>(Hit::SlotRemove0) + static_cast<int>(i));
+      }
+      if (add_slot_.bottom > add_slot_.top && contains(add_slot_, x, cy)) return Hit::AddSlot;
       if (contains(reset_colors_, x, cy)) return Hit::ResetColors;
       if (contains(width_track_, x, cy)) return Hit::WidthTrack;
       if (contains(width_value_, x, cy)) return Hit::WidthValue;
@@ -1095,12 +1183,36 @@ class SettingsUi {
       if (contains(font_small_, x, cy)) return Hit::FontSmall;
       if (contains(font_medium_, x, cy)) return Hit::FontMedium;
       if (contains(font_large_, x, cy)) return Hit::FontLarge;
-      if (contains(lang_ja_, x, cy)) return Hit::LangJa;
-      if (contains(lang_en_, x, cy)) return Hit::LangEn;
+      if (contains(lang_change_, x, cy)) return Hit::LangChange;
       if (contains(about_, x, cy)) return Hit::About;
       if (contains(quit_, x, cy)) return Hit::Quit;
     }
     return Hit::None;
+  }
+
+  void pick_slot_language(size_t index) {
+    if (index >= settings_.aura_slots.size()) return;
+    std::vector<std::string> used;
+    for (size_t i = 0; i < settings_.aura_slots.size(); ++i) {
+      if (i != index) used.push_back(settings_.aura_slots[i].lang_id);
+    }
+    auto choices = unused_input_languages(used);
+    choices.insert(choices.begin(), settings_.aura_slots[index].lang_id);
+
+    HMENU menu = CreatePopupMenu();
+    for (size_t i = 0; i < choices.size(); ++i) {
+      AppendMenuW(menu, MF_STRING, static_cast<UINT_PTR>(i + 1),
+                  input_language_display_name(choices[i], lang() != Lang::En));
+    }
+    POINT pt{};
+    GetCursorPos(&pt);
+    const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, hwnd_, nullptr);
+    DestroyMenu(menu);
+    if (cmd <= 0) return;
+    const size_t choice = static_cast<size_t>(cmd - 1);
+    if (choice >= choices.size()) return;
+    settings_.aura_slots[index].lang_id = choices[choice];
+    emit();
   }
 
   void emit() {
@@ -1164,6 +1276,7 @@ class SettingsUi {
 
     switch (hover_) {
       case Hit::TabAura:
+        if (page_ == Page::LangPicker) page_ = Page::Main;
         if (active_tab_ != Tab::Aura) {
           start_tab_anim(active_tab_rect(), tab_aura_);
           active_tab_ = Tab::Aura;
@@ -1172,6 +1285,7 @@ class SettingsUi {
         InvalidateRect(hwnd_, nullptr, FALSE);
         break;
       case Hit::TabFirefly:
+        if (page_ == Page::LangPicker) page_ = Page::Main;
         if (active_tab_ != Tab::Firefly) {
           start_tab_anim(active_tab_rect(), tab_firefly_);
           active_tab_ = Tab::Firefly;
@@ -1180,6 +1294,7 @@ class SettingsUi {
         InvalidateRect(hwnd_, nullptr, FALSE);
         break;
       case Hit::TabGeneral:
+        if (page_ == Page::LangPicker) page_ = Page::Main;
         if (active_tab_ != Tab::General) {
           start_tab_anim(active_tab_rect(), tab_general_);
           active_tab_ = Tab::General;
@@ -1207,23 +1322,29 @@ class SettingsUi {
       case Hit::ScrollBar:
         dragging_scroll_ = true;
         break;
-      case Hit::LangJa:
-        settings_.language = kLangJa;
+      case Hit::LangChange:
+        page_ = Page::LangPicker;
+        scroll_y_ = 0;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        break;
+      case Hit::LangBack:
+        page_ = Page::Main;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        break;
+      case Hit::AddSlot: {
+        std::vector<std::string> used;
+        for (const auto& s : settings_.aura_slots) used.push_back(s.lang_id);
+        auto unused = unused_input_languages(used);
+        if (unused.empty()) break;
+        AuraColorSlot slot;
+        slot.lang_id = unused.front();
+        slot.color = settings_.default_color_for_new_slot(settings_.aura_slots.size());
+        settings_.aura_slots.push_back(slot);
         emit();
         break;
-      case Hit::LangEn:
-        settings_.language = kLangEn;
-        emit();
-        break;
-      case Hit::JpSwatch:
-        if (pick_color(settings_.color_jp)) emit();
-        break;
-      case Hit::EnSwatch:
-        if (pick_color(settings_.color_en)) emit();
-        break;
+      }
       case Hit::ResetColors:
-        settings_.color_jp = kDefaultColorJp;
-        settings_.color_en = kDefaultColorEn;
+        settings_.aura_slots = default_settings().aura_slots;
         flash_reset(true);
         emit();
         break;
@@ -1292,8 +1413,35 @@ class SettingsUi {
           PostQuitMessage(0);
         }
         break;
-      default:
+      default: {
+        const int hv = static_cast<int>(hover_);
+        if (hv >= static_cast<int>(Hit::SlotLang0) && hv < static_cast<int>(Hit::SlotLang0) + kMaxAuraSlots) {
+          pick_slot_language(static_cast<size_t>(hv - static_cast<int>(Hit::SlotLang0)));
+        } else if (hv >= static_cast<int>(Hit::SlotSwatch0) &&
+                   hv < static_cast<int>(Hit::SlotSwatch0) + kMaxAuraSlots) {
+          const size_t i = static_cast<size_t>(hv - static_cast<int>(Hit::SlotSwatch0));
+          if (i < settings_.aura_slots.size() && pick_color(settings_.aura_slots[i].color)) emit();
+        } else if (hv >= static_cast<int>(Hit::SlotRemove0) &&
+                   hv < static_cast<int>(Hit::SlotRemove0) + kMaxAuraSlots) {
+          const size_t i = static_cast<size_t>(hv - static_cast<int>(Hit::SlotRemove0));
+          if (i < settings_.aura_slots.size() &&
+              settings_.aura_slots.size() > static_cast<size_t>(kMinAuraSlots)) {
+            settings_.aura_slots.erase(settings_.aura_slots.begin() + static_cast<std::ptrdiff_t>(i));
+            emit();
+          }
+        } else if (hv >= static_cast<int>(Hit::LangPick0) &&
+                   hv < static_cast<int>(Hit::LangPick0) + 16) {
+          size_t n = 0;
+          const auto* cat = input_language_catalog(n);
+          const size_t i = static_cast<size_t>(hv - static_cast<int>(Hit::LangPick0));
+          if (i < n) {
+            settings_.language = cat[i].id;
+            page_ = Page::Main;
+            emit();
+          }
+        }
         break;
+      }
     }
   }
 
@@ -1322,17 +1470,21 @@ class SettingsUi {
   bool reset_width_flash_ = false;
   bool width_editing_ = false;
   std::wstring width_edit_buf_;
-  RECT sec_color_title_{}, sec_color_sub_{}, jp_label_{}, jp_swatch_{}, en_label_{}, en_swatch_{}, reset_colors_{};
+  RECT sec_color_title_{}, sec_color_sub_{}, reset_colors_{};
+  std::vector<RECT> slot_lang_, slot_swatch_, slot_remove_;
+  RECT add_slot_{};
   RECT rule1_{}, sec_width_title_{}, sec_width_sub_{}, width_track_{}, width_value_{}, reset_width_{};
   RECT rule2_{}, sec_disp_title_{}, mode_always_{}, mode_focus_{}, hover_box_{}, mode_hidden_{};
   RECT rule3_{}, sec_font_title_{}, sec_font_sub_{}, font_bar_{}, font_small_{}, font_medium_{}, font_large_{};
   RECT rule4_{}, about_{}, quit_{}, scroll_bar_{};
 
   Tab active_tab_ = Tab::Aura;
+  Page page_ = Page::Main;
   RECT tab_aura_{}, tab_firefly_{}, tab_general_{};
   int tab_scroll_[3]{0, 0, 0};
   int tab_content_h_[3]{0, 0, 0};
-  RECT lang_ja_{}, lang_en_{}, lang_rule_{};
+  RECT lang_change_{}, lang_rule_{}, lang_picker_title_{}, lang_back_{};
+  std::vector<RECT> lang_pick_rows_;
   RECT ff_toggle_{}, ff_caps_title_{}, ff_caps_preserve_{}, ff_caps_upper_{}, ff_caps_lower_{};
   RECT ff_status_{}, ff_caps_ok_{}, ff_led_ok_{}, ff_dnd_ok_{};
   bool firefly_active_ = false;

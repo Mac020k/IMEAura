@@ -7,6 +7,15 @@ namespace imeaura {
 inline constexpr Rgba kDefaultColorJp{248, 40, 70, 255};
 inline constexpr Rgba kDefaultColorEn{45, 129, 253, 255};
 
+// Defaults for aura slots 3..7 when the user adds a mapping (not for ja/en defaults).
+inline constexpr Rgba kDefaultAuraSlotColors[5] = {
+    {0x16, 0xCC, 0x7B, 255},  // #16CC7B
+    {0xF1, 0xD6, 0x0F, 255},  // #F1D60F
+    {0xE6, 0x69, 0x0C, 255},  // #E6690C
+    {0x7E, 0x43, 0xD5, 255},  // #7E43D5
+    {0x63, 0x63, 0x63, 255},  // #636363
+};
+
 inline constexpr int kGradientWidthMin = 1;
 inline constexpr int kGradientWidthMax = 100;
 inline constexpr int kDefaultGradientWidth = 15;

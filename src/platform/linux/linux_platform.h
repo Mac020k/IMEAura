@@ -10,7 +10,7 @@ class LinuxPlatformBackend : public PlatformBackend {
   void shutdown() override;
   int run() override;
   bool prefers_reduced_motion() override;
-  bool is_japanese_input() override;
+  std::string active_input_language() override;
   bool is_text_input_focused() override;
   bool is_text_input_hovered() override;
   Rect get_active_monitor_rect() override;

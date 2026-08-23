@@ -11,6 +11,7 @@
 #include <memory>
 #include <shellscalingapi.h>
 #include <shobjidl.h>
+#include <string>
 #include <wtsapi32.h>
 
 namespace imeaura {
@@ -283,7 +284,7 @@ void WinPlatformBackend::refresh_reduce_motion_cache() {
     reduce_motion_cached_ = (enabled == FALSE);
 }
 
-bool WinPlatformBackend::is_japanese_input() { return win_ime_worker_japanese(); }
+std::string WinPlatformBackend::active_input_language() { return win_ime_worker_language(); }
 bool WinPlatformBackend::is_text_input_focused() { return win_text_input_focused(); }
 bool WinPlatformBackend::is_text_input_hovered() {
   if (!settings_.show_on_hover) return false;
@@ -312,13 +313,14 @@ bool WinPlatformBackend::settings_visible() const { return win_settings::visible
 
 ProbeState WinPlatformBackend::probe_state(const Settings& settings) {
   PolicyInput in{};
-  in.ime_japanese = is_japanese_input();
+  in.ime_lang = active_input_language();
   in.text_focused = is_text_input_focused();
   in.text_hovered = is_text_input_hovered();
   in.reduce_motion = prefers_reduced_motion();
   const auto policy = evaluate_policy(settings, in);
   ProbeState st{};
-  st.ime_japanese = in.ime_japanese;
+  st.ime_lang = in.ime_lang;
+  st.ime_japanese = (in.ime_lang == "ja");
   st.text_focused = in.text_focused;
   st.text_hovered = in.text_hovered;
   st.visible = policy.visible;
@@ -330,7 +332,7 @@ void WinPlatformBackend::request_refresh() { update_state(); }
 
 void WinPlatformBackend::update_state(bool force) {
   PolicyInput in{};
-  in.ime_japanese = is_japanese_input();
+  in.ime_lang = active_input_language();
   in.text_focused = is_text_input_focused();
   in.text_hovered = is_text_input_hovered();
   in.reduce_motion = reduce_motion_cached_;

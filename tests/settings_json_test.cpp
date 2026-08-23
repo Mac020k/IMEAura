@@ -1,3 +1,4 @@
+#include "core/json.h"
 #include "core/settings.h"
 
 #include <cstdlib>
@@ -39,10 +40,7 @@ int main() {
 #endif
 
   Settings loaded{};
-  // load_settings uses platform path; verify normalize directly
-  Settings raw{};
-  raw.color_jp = {1, 2, 3, 4};
-  raw.color_en = {5, 6, 7, 8};
+  Settings raw = default_settings();
   raw.display_mode = kDisplayModeOnFocus;
   raw.show_on_hover = true;
   raw.ui_font_size = kFontSizeLarge;
@@ -50,6 +48,9 @@ int main() {
   loaded = normalize_settings(raw);
   EXPECT(loaded.gradient_width == 100);
   EXPECT(loaded.show_on_hover);
+  EXPECT(loaded.aura_slots.size() == 2);
+  EXPECT(loaded.aura_slots[0].lang_id == "ja");
+  EXPECT(loaded.aura_slots[1].lang_id == "en");
 
   raw.display_mode = kDisplayModeAlways;
   loaded = normalize_settings(raw);
@@ -59,9 +60,19 @@ int main() {
   loaded = normalize_settings(raw);
   EXPECT(loaded.language == "en");
 
+  raw.language = "zh-Hans";
+  loaded = normalize_settings(raw);
+  EXPECT(loaded.language == "zh-Hans");
+
   raw.language = "zz";
   loaded = normalize_settings(raw);
   EXPECT(loaded.language == "ja");
+
+  raw.aura_slots = {{"ja", {1, 2, 3, 4}}, {"ja", {9, 9, 9, 9}}, {"ko", {10, 11, 12, 13}}};
+  loaded = normalize_settings(raw);
+  EXPECT(loaded.aura_slots.size() == 2);
+  EXPECT(loaded.aura_slots[0].lang_id == "ja");
+  EXPECT(loaded.aura_slots[1].lang_id == "ko");
 
   raw.firefly_enabled = true;
   raw.firefly_led_mode = "hid";
@@ -76,6 +87,26 @@ int main() {
   loaded = normalize_settings(raw);
   EXPECT(loaded.firefly_led_mode == "auto");
   EXPECT(loaded.firefly_caps_mode == "uppercase");
+
+  // nested aura_colors parse
+  {
+    json::Value root;
+    std::string err;
+    const char* text = R"({
+      "aura_colors": [
+        {"lang":"zh-Hans","color":[16,204,123,255]},
+        {"lang":"en","color":[5,6,7,8]}
+      ]
+    })";
+    EXPECT(json::parse(text, root, err));
+    const auto* arr = root.find("aura_colors");
+    EXPECT(arr && arr->type == json::Value::Type::Array);
+    EXPECT(arr->elements.size() == 2);
+    EXPECT(arr->elements[0].find("lang")->string_value == "zh-Hans");
+  }
+
+  EXPECT(default_settings().default_color_for_new_slot(2).r == kDefaultAuraSlotColors[0].r);
+  EXPECT(default_settings().default_color_for_new_slot(3).r == kDefaultAuraSlotColors[1].r);
 
   (void)path;
   if (failures) return 1;

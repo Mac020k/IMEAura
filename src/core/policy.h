@@ -3,6 +3,8 @@
 #include "core/color.h"
 #include "core/settings.h"
 
+#include <string>
+
 namespace imeaura {
 
 enum class FollowTarget { ActiveWindow, Cursor };
@@ -19,14 +21,14 @@ struct Rect {
 };
 
 struct PolicyInput {
-  bool ime_japanese = false;
+  std::string ime_lang = kInputEn;
   bool text_focused = false;
   bool text_hovered = false;
   bool reduce_motion = false;
 
   bool operator==(const PolicyInput& o) const {
-    return ime_japanese == o.ime_japanese && text_focused == o.text_focused &&
-           text_hovered == o.text_hovered && reduce_motion == o.reduce_motion;
+    return ime_lang == o.ime_lang && text_focused == o.text_focused && text_hovered == o.text_hovered &&
+           reduce_motion == o.reduce_motion;
   }
   bool operator!=(const PolicyInput& o) const { return !(*this == o); }
 };

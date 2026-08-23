@@ -4,7 +4,7 @@
 
 namespace imeaura {
 
-enum class Lang { Ja, En };
+enum class Lang { Ja, En, ZhHans, ZhHant, Ko };
 
 enum class StringId {
   kSettingsTitle,
@@ -17,6 +17,8 @@ enum class StringId {
   kColorEn,
   kColorReset,
   kColorResetDone,
+  kAddColorSlot,
+  kRemoveColorSlot,
   kWidthSection,
   kWidthSub,
   kWidthReset,
@@ -32,8 +34,13 @@ enum class StringId {
   kFontMedium,
   kFontLarge,
   kLangSection,
+  kLangChange,
+  kLangBack,
   kLangJa,
   kLangEn,
+  kLangZhHans,
+  kLangZhHant,
+  kLangKo,
   kAbout,
   kQuit,
   kQuitConfirmTitle,
@@ -61,5 +68,6 @@ enum class StringId {
 const wchar_t* tr(Lang lang, StringId id);
 Lang lang_from_key(const std::string& key);
 const wchar_t* lang_font_family(Lang lang);
+StringId string_id_for_ui_lang(const std::string& key);
 
 }  // namespace imeaura

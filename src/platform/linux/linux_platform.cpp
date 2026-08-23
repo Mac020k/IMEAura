@@ -2,9 +2,11 @@
 
 #include "platform/firefly_host.h"
 #include "platform/linux/linux_ime.h"
+#include "platform/linux/linux_settings.h"
 #include "platform/linux/linux_x11_edges.h"
 
 #include <X11/Xlib.h>
+#include <gtk/gtk.h>
 
 #include <chrono>
 #include <iostream>
@@ -34,7 +36,7 @@ Rect primary_monitor_rect(Display* dpy) {
 void refresh_policy() {
   if (!g_self) return;
   PolicyInput in{};
-  in.ime_japanese = linux_is_japanese_input();
+  in.ime_lang = linux_active_input_language();
   in.reduce_motion = g_self->prefers_reduced_motion();
   const auto policy = evaluate_policy(g_settings, in);
   g_self->apply_policy(g_settings, policy);
@@ -58,18 +60,32 @@ bool LinuxPlatformBackend::init() {
     return false;
   }
 
-  g_firefly.set_on_toggle([] { refresh_policy(); });
+  g_firefly.set_on_toggle([] {
+    refresh_policy();
+    linux_settings::set_firefly_active(g_firefly.is_active());
+  });
   if (g_settings.firefly_enabled) {
     if (!g_firefly.apply(g_settings, g_settings)) {
       save_settings(g_settings);
     }
   }
+  linux_settings::create(g_settings, [](const Settings& s) {
+    const bool was = g_settings.firefly_enabled;
+    g_settings = s;
+    save_settings(g_settings);
+    if (was != g_settings.firefly_enabled) {
+      g_firefly.apply(g_settings, g_settings);
+    }
+    linux_settings::set_firefly_active(g_firefly.is_active());
+    refresh_policy();
+  });
   std::cerr << "Linux: IME Aura host (X11 edges + Firefly)\n";
   return true;
 }
 
 void LinuxPlatformBackend::shutdown() {
   g_firefly.shutdown();
+  linux_settings::destroy();
   g_edges.shutdown();
   if (g_dpy) {
     XCloseDisplay(g_dpy);
@@ -83,6 +99,9 @@ int LinuxPlatformBackend::run() {
   refresh_policy();
 
   while (g_running) {
+    while (g_main_context_pending(nullptr)) {
+      g_main_context_iteration(nullptr, FALSE);
+    }
     g_firefly.poll();
     refresh_policy();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -92,7 +111,7 @@ int LinuxPlatformBackend::run() {
 }
 
 bool LinuxPlatformBackend::prefers_reduced_motion() { return false; }
-bool LinuxPlatformBackend::is_japanese_input() { return linux_is_japanese_input(); }
+std::string LinuxPlatformBackend::active_input_language() { return linux_active_input_language(); }
 bool LinuxPlatformBackend::is_text_input_focused() { return false; }
 bool LinuxPlatformBackend::is_text_input_hovered() { return false; }
 
@@ -125,16 +144,17 @@ void LinuxPlatformBackend::apply_policy(const Settings& settings, const PolicyOu
   }
 }
 
-void LinuxPlatformBackend::show_settings_window() {}
-void LinuxPlatformBackend::hide_settings_window() {}
-bool LinuxPlatformBackend::settings_visible() const { return false; }
+void LinuxPlatformBackend::show_settings_window() { linux_settings::show(); }
+void LinuxPlatformBackend::hide_settings_window() { linux_settings::hide(); }
+bool LinuxPlatformBackend::settings_visible() const { return linux_settings::visible(); }
 
 ProbeState LinuxPlatformBackend::probe_state(const Settings& settings) {
   PolicyInput in{};
-  in.ime_japanese = linux_is_japanese_input();
+  in.ime_lang = linux_active_input_language();
   const auto p = evaluate_policy(settings, in);
   ProbeState st{};
-  st.ime_japanese = in.ime_japanese;
+  st.ime_lang = in.ime_lang;
+  st.ime_japanese = (in.ime_lang == "ja");
   st.visible = p.visible;
   if (g_dpy) {
     st.monitor_rect = primary_monitor_rect(g_dpy);

@@ -25,7 +25,7 @@ PolicyOutput evaluate_policy(const Settings& settings, const PolicyInput& input)
     }
   }
 
-  out.target_color = input.ime_japanese ? settings.color_jp : settings.color_en;
+  out.target_color = settings.color_for_lang(input.ime_lang);
   out.fade_ms = motion_ms(kFadeMs, input.reduce_motion);
   out.blend_ms = motion_ms(kStatusBlendMs, input.reduce_motion);
   return out;

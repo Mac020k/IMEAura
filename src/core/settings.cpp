@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_set>
 
 namespace fs = std::filesystem;
 
@@ -14,25 +15,38 @@ namespace imeaura {
 namespace {
 
 Rgba color_from_json(const json::Value* v, Rgba fallback) {
-  if (!v || v->type != json::Value::Type::Array || v->array_items.size() != 4) return fallback;
+  if (!v || v->type != json::Value::Type::Array || v->elements.size() != 4) return fallback;
   Rgba c = fallback;
-  try {
-    for (int i = 0; i < 4; ++i) {
-      const auto& item = v->array_items[static_cast<size_t>(i)];
-      if (item.kind != json::Value::ArrayItem::Number) return fallback;
-      int n = static_cast<int>(item.number);
-      if (n < 0 || n > 255) return fallback;
-      switch (i) {
-        case 0: c.r = static_cast<uint8_t>(n); break;
-        case 1: c.g = static_cast<uint8_t>(n); break;
-        case 2: c.b = static_cast<uint8_t>(n); break;
-        case 3: c.a = static_cast<uint8_t>(n); break;
-      }
+  for (int i = 0; i < 4; ++i) {
+    const auto& item = v->elements[static_cast<size_t>(i)];
+    if (item.type != json::Value::Type::Number) return fallback;
+    int n = static_cast<int>(item.number_value);
+    if (n < 0 || n > 255) return fallback;
+    switch (i) {
+      case 0:
+        c.r = static_cast<uint8_t>(n);
+        break;
+      case 1:
+        c.g = static_cast<uint8_t>(n);
+        break;
+      case 2:
+        c.b = static_cast<uint8_t>(n);
+        break;
+      case 3:
+        c.a = static_cast<uint8_t>(n);
+        break;
     }
-  } catch (...) {
-    return fallback;
   }
   return c;
+}
+
+json::Value color_to_json(const Rgba& c) {
+  return json::Value::make_array({
+      json::Value::make_number(static_cast<double>(c.r)),
+      json::Value::make_number(static_cast<double>(c.g)),
+      json::Value::make_number(static_cast<double>(c.b)),
+      json::Value::make_number(static_cast<double>(c.a)),
+  });
 }
 
 std::string normalize_display_mode(const std::string& v) {
@@ -49,6 +63,35 @@ int clamp_width(int w) {
   if (w < kGradientWidthMin) return kGradientWidthMin;
   if (w > kGradientWidthMax) return kGradientWidthMax;
   return w;
+}
+
+std::vector<AuraColorSlot> default_aura_slots() {
+  return {
+      {kInputJa, kDefaultColorJp},
+      {kInputEn, kDefaultColorEn},
+  };
+}
+
+std::vector<AuraColorSlot> normalize_aura_slots(std::vector<AuraColorSlot> slots) {
+  std::vector<AuraColorSlot> out;
+  std::unordered_set<std::string> seen;
+  for (auto& s : slots) {
+    if (!is_known_input_language(s.lang_id)) continue;
+    if (seen.count(s.lang_id)) continue;
+    seen.insert(s.lang_id);
+    out.push_back(std::move(s));
+    if (static_cast<int>(out.size()) >= kMaxAuraSlots) break;
+  }
+  if (out.empty()) return default_aura_slots();
+  if (static_cast<int>(out.size()) < kMinAuraSlots) {
+    for (const auto& d : default_aura_slots()) {
+      if (seen.count(d.lang_id)) continue;
+      out.push_back(d);
+      seen.insert(d.lang_id);
+      if (static_cast<int>(out.size()) >= kMinAuraSlots) break;
+    }
+  }
+  return out;
 }
 
 #ifdef _WIN32
@@ -73,12 +116,33 @@ fs::path config_dir() {
 
 }  // namespace
 
-Settings default_settings() { return Settings{}; }
-
-std::string normalize_language(const std::string& v) {
-  if (v == kLangEn) return v;
-  return kLangJa;
+Settings default_settings() {
+  Settings s;
+  s.aura_slots = default_aura_slots();
+  return s;
 }
+
+Rgba Settings::color_for_lang(std::string_view lang_id) const {
+  for (const auto& slot : aura_slots) {
+    if (slot.lang_id == lang_id) return slot.color;
+  }
+  for (const auto& slot : aura_slots) {
+    if (slot.lang_id == kInputEn) return slot.color;
+  }
+  if (!aura_slots.empty()) return aura_slots.front().color;
+  return kDefaultColorEn;
+}
+
+Rgba Settings::default_color_for_new_slot(size_t existing_count) const {
+  if (existing_count < 2) {
+    return existing_count == 0 ? kDefaultColorJp : kDefaultColorEn;
+  }
+  const size_t idx = existing_count - 2;
+  if (idx < 5) return kDefaultAuraSlotColors[idx];
+  return kDefaultAuraSlotColors[4];
+}
+
+std::string normalize_language(const std::string& v) { return normalize_ui_language(v); }
 
 std::string normalize_led_mode(const std::string& v) {
   if (v == kFireflyLedHid || v == kFireflyLedNone) return v;
@@ -92,6 +156,7 @@ std::string normalize_caps_mode(const std::string& v) {
 
 Settings normalize_settings(const Settings& raw) {
   Settings s = raw;
+  s.aura_slots = normalize_aura_slots(std::move(s.aura_slots));
   s.display_mode = normalize_display_mode(s.display_mode);
   s.ui_font_size = normalize_font_size(s.ui_font_size);
   s.gradient_width = clamp_width(s.gradient_width);
@@ -124,8 +189,33 @@ bool load_settings(Settings& out) {
     return false;
   }
   Settings s = default_settings();
-  if (const auto* v = root.find("color_jp")) s.color_jp = color_from_json(v, s.color_jp);
-  if (const auto* v = root.find("color_en")) s.color_en = color_from_json(v, s.color_en);
+  bool has_aura = false;
+  if (const auto* v = root.find("aura_colors")) {
+    if (v->type == json::Value::Type::Array) {
+      std::vector<AuraColorSlot> slots;
+      for (const auto& item : v->elements) {
+        if (item.type != json::Value::Type::Object) continue;
+        const auto* lang = item.find("lang");
+        const auto* color = item.find("color");
+        if (!lang || lang->type != json::Value::Type::String) continue;
+        AuraColorSlot slot;
+        slot.lang_id = lang->string_value;
+        slot.color = color_from_json(color, kDefaultColorEn);
+        slots.push_back(std::move(slot));
+      }
+      if (!slots.empty()) {
+        s.aura_slots = std::move(slots);
+        has_aura = true;
+      }
+    }
+  }
+  if (!has_aura) {
+    Rgba jp = kDefaultColorJp;
+    Rgba en = kDefaultColorEn;
+    if (const auto* v = root.find("color_jp")) jp = color_from_json(v, jp);
+    if (const auto* v = root.find("color_en")) en = color_from_json(v, en);
+    s.aura_slots = {{kInputJa, jp}, {kInputEn, en}};
+  }
   if (const auto* v = root.find("display_mode")) {
     if (v->type == json::Value::Type::String) s.display_mode = v->string_value;
   }
@@ -159,21 +249,24 @@ bool save_settings(const Settings& settings) {
   const auto dir = config_dir();
   std::error_code ec;
   fs::create_directories(dir, ec);
+  std::vector<json::Value> aura_arr;
+  aura_arr.reserve(s.aura_slots.size());
+  for (const auto& slot : s.aura_slots) {
+    aura_arr.push_back(json::Value::make_object({
+        {"lang", json::Value::make_string(slot.lang_id)},
+        {"color", color_to_json(slot.color)},
+    }));
+  }
+  Rgba jp = kDefaultColorJp;
+  Rgba en = kDefaultColorEn;
+  for (const auto& slot : s.aura_slots) {
+    if (slot.lang_id == kInputJa) jp = slot.color;
+    if (slot.lang_id == kInputEn) en = slot.color;
+  }
   json::Value root = json::Value::make_object({
-      {"color_jp",
-       json::Value::make_array(
-           std::vector<json::Value::ArrayItem>{
-               {json::Value::ArrayItem::Number, static_cast<double>(s.color_jp.r), {}},
-               {json::Value::ArrayItem::Number, static_cast<double>(s.color_jp.g), {}},
-               {json::Value::ArrayItem::Number, static_cast<double>(s.color_jp.b), {}},
-               {json::Value::ArrayItem::Number, static_cast<double>(s.color_jp.a), {}}})},
-      {"color_en",
-       json::Value::make_array(
-           std::vector<json::Value::ArrayItem>{
-               {json::Value::ArrayItem::Number, static_cast<double>(s.color_en.r), {}},
-               {json::Value::ArrayItem::Number, static_cast<double>(s.color_en.g), {}},
-               {json::Value::ArrayItem::Number, static_cast<double>(s.color_en.b), {}},
-               {json::Value::ArrayItem::Number, static_cast<double>(s.color_en.a), {}}})},
+      {"aura_colors", json::Value::make_array(std::move(aura_arr))},
+      {"color_jp", color_to_json(jp)},
+      {"color_en", color_to_json(en)},
       {"display_mode", json::Value::make_string(s.display_mode)},
       {"show_on_hover", json::Value::make_bool(s.show_on_hover)},
       {"ui_font_size", json::Value::make_string(s.ui_font_size)},

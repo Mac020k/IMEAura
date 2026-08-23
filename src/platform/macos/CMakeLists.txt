@@ -6,6 +6,7 @@ add_library(imeaura_platform STATIC
   mac_platform.mm
   mac_ime.mm
   mac_firefly.mm
+  mac_settings.mm
 )
 
 target_include_directories(imeaura_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)

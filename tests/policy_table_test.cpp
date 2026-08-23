@@ -21,10 +21,24 @@ int main() {
   Settings s = default_settings();
 
   PolicyInput in{};
-  in.ime_japanese = true;
+  in.ime_lang = "ja";
   auto out = evaluate_policy(s, in);
   EXPECT(out.visible);
   EXPECT(out.target_color.r == kDefaultColorJp.r);
+
+  in.ime_lang = "en";
+  out = evaluate_policy(s, in);
+  EXPECT(out.target_color.r == kDefaultColorEn.r);
+
+  s.aura_slots.push_back({"ko", kDefaultAuraSlotColors[0]});
+  s = normalize_settings(s);
+  in.ime_lang = "ko";
+  out = evaluate_policy(s, in);
+  EXPECT(out.target_color.r == kDefaultAuraSlotColors[0].r);
+
+  in.ime_lang = "vi";  // unmatched → en fallback
+  out = evaluate_policy(s, in);
+  EXPECT(out.target_color.r == kDefaultColorEn.r);
 
   s.display_mode = kDisplayModeHidden;
   out = evaluate_policy(s, in);

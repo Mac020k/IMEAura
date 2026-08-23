@@ -1,10 +1,11 @@
 #include "platform/windows/win_ime.h"
 
+#include "core/input_languages.h"
+
 #include <imm.h>
 
 #include <algorithm>
 #include <atomic>
-#include <cctype>
 #include <cwctype>
 #include <functional>
 #include <mutex>
@@ -26,9 +27,8 @@ int SendImeControl(HWND hwnd, int command) {
   if (!hwnd) return -1;
   DWORD_PTR result = 0;
   constexpr UINT kTimeout = 25;
-  const LRESULT ok = SendMessageTimeoutW(
-      hwnd, 0x0283 /*WM_IME_CONTROL*/, command, 0,
-      SMTO_BLOCK | SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT, kTimeout, &result);
+  const LRESULT ok = SendMessageTimeoutW(hwnd, 0x0283 /*WM_IME_CONTROL*/, command, 0,
+                                         SMTO_BLOCK | SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT, kTimeout, &result);
   if (!ok) return -1;
   return static_cast<int>(result);
 }
@@ -71,7 +71,36 @@ HWND ForegroundFocusHwnd() {
   return FocusHwnd(fg);
 }
 
+std::string LangFromLangId(LANGID langid) {
+  const WORD primary = PRIMARYLANGID(langid);
+  const WORD sub = SUBLANGID(langid);
+  if (primary == LANG_JAPANESE) return kInputJa;
+  if (primary == LANG_KOREAN) return kInputKo;
+  if (primary == LANG_CHINESE) {
+    if (sub == SUBLANG_CHINESE_SIMPLIFIED || sub == SUBLANG_CHINESE_SINGAPORE) return kInputZhHans;
+    return kInputZhHant;
+  }
+  return kInputEn;
+}
+
+std::string DetectLanguageFromLayout() {
+  const HWND fg = GetForegroundWindow();
+  if (!fg) return kInputEn;
+  const DWORD tid = GetWindowThreadProcessId(fg, nullptr);
+  const HKL hkl = GetKeyboardLayout(tid);
+  return LangFromLangId(LOWORD(reinterpret_cast<ULONG_PTR>(hkl)));
+}
+
 }  // namespace
+
+std::string win_active_input_language() {
+  const std::string layout = DetectLanguageFromLayout();
+  if (layout == kInputJa) {
+    if (win_is_japanese_input()) return kInputJa;
+    return kInputEn;
+  }
+  return layout;
+}
 
 bool win_is_japanese_input() {
   const HWND fg = GetForegroundWindow();
@@ -101,6 +130,8 @@ bool win_native_edit_is_hovered() {
 namespace {
 
 std::atomic<bool> g_ime_japanese{false};
+std::string g_ime_lang = kInputEn;
+std::mutex g_ime_lang_mutex;
 std::atomic<bool> g_ime_stop{true};
 HANDLE g_ime_wake_event = nullptr;
 std::thread g_ime_thread;
@@ -109,12 +140,17 @@ std::mutex g_ime_cb_mutex;
 std::function<void()> g_ime_change_cb;
 
 void ImeWorkerLoop() {
-  bool prev = false;
+  std::string prev;
   while (!g_ime_stop.load(std::memory_order_relaxed)) {
-    const bool jp = win_is_japanese_input();
+    const std::string lang = win_active_input_language();
+    const bool jp = (lang == kInputJa);
     g_ime_japanese.store(jp, std::memory_order_relaxed);
-    if (jp != prev) {
-      prev = jp;
+    {
+      std::lock_guard lk(g_ime_lang_mutex);
+      g_ime_lang = lang;
+    }
+    if (lang != prev) {
+      prev = lang;
       std::function<void()> cb;
       {
         std::lock_guard lk(g_ime_cb_mutex);
@@ -146,8 +182,11 @@ void win_ime_worker_stop() {
   if (g_ime_thread.joinable()) g_ime_thread.join();
 }
 
-bool win_ime_worker_japanese() {
-  return g_ime_japanese.load(std::memory_order_relaxed);
+bool win_ime_worker_japanese() { return g_ime_japanese.load(std::memory_order_relaxed); }
+
+std::string win_ime_worker_language() {
+  std::lock_guard lk(g_ime_lang_mutex);
+  return g_ime_lang;
 }
 
 void win_ime_worker_poke() {
