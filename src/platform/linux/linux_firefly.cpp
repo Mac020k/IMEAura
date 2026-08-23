@@ -25,6 +25,22 @@ namespace {
 
 LinuxFireflyBackend* g_self = nullptr;
 
+std::atomic<bool> g_x_grab_error{false};
+
+int XGrabErrorHandler(Display*, XErrorEvent* e) {
+  if (e->error_code == BadAccess) g_x_grab_error = true;
+  return 0;
+}
+
+bool SyncGrabKey(Display* dpy, KeyCode key, Window root) {
+  g_x_grab_error = false;
+  XErrorHandler old = XSetErrorHandler(XGrabErrorHandler);
+  XGrabKey(dpy, key, AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
+  XSync(dpy, False);
+  XSetErrorHandler(old);
+  return !g_x_grab_error;
+}
+
 bool RunCommand(const std::string& cmd) { return std::system(cmd.c_str()) == 0; }
 
 bool CapsLockOn(Display* dpy) {
@@ -177,6 +193,9 @@ struct LinuxFireflyBackend::Impl {
   bool dnd_ok = false;
   bool dnd_backed_up = false;
   bool use_sysfs_led = false;
+  bool grabbed_keys = false;
+  bool dnd_running = false;
+  bool stopped = false;
 
   std::mutex dnd_mu;
   std::condition_variable dnd_cv;
@@ -199,17 +218,17 @@ struct LinuxFireflyBackend::Impl {
     }
   }
 
-  void grab_letter_keys() {
-    if (!dpy || !root) return;
+  bool grab_letter_keys() {
+    if (!dpy || !root) return false;
     for (int sym = XK_a; sym <= XK_z; ++sym) {
       const KeyCode code = XKeysymToKeycode(dpy, static_cast<KeySym>(sym));
-      if (code) XGrabKey(dpy, code, AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
+      if (code && !SyncGrabKey(dpy, code, root)) return false;
     }
     for (int sym = XK_A; sym <= XK_Z; ++sym) {
       const KeyCode code = XKeysymToKeycode(dpy, static_cast<KeySym>(sym));
-      if (code) XGrabKey(dpy, code, AnyModifier, root, True, GrabModeAsync, GrabModeAsync);
+      if (code && !SyncGrabKey(dpy, code, root)) return false;
     }
-    XSync(dpy, False);
+    return true;
   }
 
   void ungrab_letter_keys() {
@@ -231,7 +250,9 @@ struct LinuxFireflyBackend::Impl {
 };
 
 LinuxFireflyBackend::LinuxFireflyBackend() = default;
-LinuxFireflyBackend::~LinuxFireflyBackend() { stop(); }
+LinuxFireflyBackend::~LinuxFireflyBackend() {
+  if (impl_) stop();
+}
 
 FireflyCapabilities LinuxFireflyBackend::capabilities() const {
   FireflyCapabilities c{};
@@ -274,16 +295,19 @@ bool LinuxFireflyBackend::start(std::function<void()> on_toggle, const std::stri
     SetCapsLockState(impl_->dpy, impl_->caps_code, false);
   }
 
-  XGrabKey(impl_->dpy, impl_->caps_code, AnyModifier, impl_->root, True, GrabModeAsync, GrabModeAsync);
-  impl_->grab_letter_keys();
+  if (!SyncGrabKey(impl_->dpy, impl_->caps_code, impl_->root) || !impl_->grab_letter_keys()) {
+    stop();
+    return false;
+  }
+  impl_->grabbed_keys = true;
   XSelectInput(impl_->dpy, impl_->root, KeyPressMask | KeyReleaseMask);
-  XSync(impl_->dpy, False);
 
   RestoreDnd();
   BackupDnd();
   impl_->dnd_backed_up = true;
   impl_->dnd_stop.store(false);
   impl_->dnd_thread = std::thread([this] { impl_->dnd_worker(); });
+  impl_->dnd_running = true;
 
   g_self = this;
   set_led(false);
@@ -292,25 +316,30 @@ bool LinuxFireflyBackend::start(std::function<void()> on_toggle, const std::stri
 }
 
 void LinuxFireflyBackend::stop() {
-  if (!impl_) return;
+  if (!impl_ || impl_->stopped) return;
+  impl_->stopped = true;
 
-  if (impl_->dpy && impl_->caps_code) {
+  if (impl_->grabbed_keys && impl_->dpy && impl_->caps_code) {
     impl_->ungrab_letter_keys();
     XUngrabKey(impl_->dpy, impl_->caps_code, AnyModifier, impl_->root);
     XSync(impl_->dpy, False);
+    impl_->grabbed_keys = false;
   }
   g_self = nullptr;
 
-  {
-    std::lock_guard lk(impl_->dnd_mu);
-    impl_->dnd_stop.store(true);
-    impl_->dnd_cv.notify_one();
+  if (impl_->dnd_running) {
+    {
+      std::lock_guard lk(impl_->dnd_mu);
+      impl_->dnd_stop.store(true);
+      impl_->dnd_cv.notify_one();
+    }
+    if (impl_->dnd_thread.joinable()) impl_->dnd_thread.join();
+    impl_->dnd_running = false;
   }
-  if (impl_->dnd_thread.joinable()) impl_->dnd_thread.join();
 
   if (impl_->dnd_backed_up) RestoreDnd();
   if (impl_->dpy) {
-    SetCapsLockState(impl_->dpy, impl_->caps_code, impl_->saved_caps_on);
+    if (impl_->caps_code) SetCapsLockState(impl_->dpy, impl_->caps_code, impl_->saved_caps_on);
     XCloseDisplay(impl_->dpy);
     impl_->dpy = nullptr;
   }
