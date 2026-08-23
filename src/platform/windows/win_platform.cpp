@@ -2,11 +2,13 @@
 
 #include "core/i18n.h"
 #include "platform/windows/win_comp_edges.h"
+#include "platform/windows/win_firefly.h"
 #include "platform/windows/win_ime.h"
 #include "platform/windows/win_settings_api.h"
 #include "platform/windows/win_tray.h"
 
 #include <dbt.h>
+#include <memory>
 #include <shellscalingapi.h>
 #include <shobjidl.h>
 #include <wtsapi32.h>
@@ -21,6 +23,7 @@ constexpr UINT kCoalesceTimerId = 5;
 constexpr UINT kPollMs = 100;
 constexpr UINT kCoalesceMs = 40;
 constexpr UINT kRefreshMessage = WM_APP + 2;
+constexpr UINT kFireflyToggleMsg = WM_APP + 100;
 constexpr int kCmdOpenSettings = 1001;
 constexpr int kCmdQuit = 1002;
 
@@ -29,6 +32,36 @@ WinCompEdges g_edges;
 WinTray g_tray;
 HINSTANCE g_instance = nullptr;
 HWND g_app_hwnd = nullptr;
+std::unique_ptr<WinFireflyBackend> g_firefly;
+
+void NotifyFireflyUi() {
+  win_settings::set_firefly_active(g_firefly && g_firefly->is_active());
+}
+
+bool StartFirefly(const Settings& settings) {
+  if (!g_firefly) g_firefly = std::make_unique<WinFireflyBackend>();
+  g_firefly->set_target_hwnd(g_app_hwnd);
+  if (!g_firefly->start(
+          [] {
+            if (g_app_hwnd) PostMessageW(g_app_hwnd, kRefreshMessage, 0, 0);
+            NotifyFireflyUi();
+          },
+          settings.firefly_caps_mode)) {
+    g_firefly.reset();
+    win_settings::set_firefly_active(false);
+    return false;
+  }
+  g_firefly->set_led_mode(settings.firefly_led_mode);
+  NotifyFireflyUi();
+  return true;
+}
+
+void StopFirefly() {
+  if (!g_firefly) return;
+  g_firefly->stop();
+  g_firefly.reset();
+  win_settings::set_firefly_active(false);
+}
 
 Rect MonitorRectFromHMONITOR(HMONITOR mon) {
   MONITORINFO mi{};
@@ -162,13 +195,36 @@ bool WinPlatformBackend::init() {
   }
 
   if (!win_settings::create(g_instance, settings_, [this](const Settings& s) {
+        const bool was_ff = settings_.firefly_enabled;
+        const std::string prev_caps = settings_.firefly_caps_mode;
+        const std::string prev_led = settings_.firefly_led_mode;
         settings_ = s;
         save_settings(settings_);
         notify_settings_changed(settings_);
         sync_text_watchers();
+        if (s.firefly_enabled && !was_ff) {
+          if (!StartFirefly(settings_)) {
+            settings_.firefly_enabled = false;
+            save_settings(settings_);
+            win_settings::sync(settings_);
+          }
+        } else if (!s.firefly_enabled && was_ff) {
+          StopFirefly();
+        } else if (s.firefly_enabled && g_firefly) {
+          if (s.firefly_caps_mode != prev_caps) g_firefly->set_caps_mode(s.firefly_caps_mode);
+          if (s.firefly_led_mode != prev_led) g_firefly->set_led_mode(s.firefly_led_mode);
+        }
         update_state(true);
       })) {
     return false;
+  }
+
+  if (settings_.firefly_enabled) {
+    if (!StartFirefly(settings_)) {
+      settings_.firefly_enabled = false;
+      save_settings(settings_);
+      win_settings::sync(settings_);
+    }
   }
 
   sync_text_watchers();
@@ -193,6 +249,7 @@ void WinPlatformBackend::shutdown() {
   unhook(foreground_hook_);
   unhook(focus_hook_);
   unhook(ime_hook_);
+  StopFirefly();
   g_edges.shutdown();
   g_tray.destroy();
   win_ime_worker_stop();
@@ -361,6 +418,9 @@ LRESULT CALLBACK WinPlatformBackend::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPA
       return 0;
     case kRefreshMessage:
       self->update_state();
+      return 0;
+    case kFireflyToggleMsg:
+      if (g_firefly) g_firefly->handle_toggle();
       return 0;
     case WM_TIMER:
       if (wp == kPollTimerId) {

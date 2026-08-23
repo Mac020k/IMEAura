@@ -28,6 +28,7 @@ Native implementation: C++20 in `src/`.
 - [x] Color picker supports alpha channel (RGBA sliders)
 - [x] Gradient thickness clamped to half of monitor min dimension
 - [x] Text-input hover/focus updates within ~100 ms (worker callback + 100 ms poll)
+- [x] Firefly (Windows): CapsLock Available/Busy toggle, LED, Quiet Hours, caps mode
 
 ## Windows settings UI polish
 
@@ -48,6 +49,9 @@ Defined in `src/core/settings.{h,cpp}`:
 - `ui_font_size`: `small` | `medium` | `large`
 - `gradient_width`: 1–100
 - `language`: `ja` | `en`
+- `firefly_enabled`: boolean (default `false`)
+- `firefly_caps_mode`: `preserve` | `uppercase` | `lowercase` (default `uppercase`)
+- `firefly_led_mode`: `auto` | `hid` | `none` (default `auto`)
 
 Paths:
 

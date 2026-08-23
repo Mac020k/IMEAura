@@ -9,11 +9,12 @@ namespace {
 const wchar_t* kJa[static_cast<size_t>(StringId::kCount)] = {
   L"IME Aura",                                   // kSettingsTitle
   L"Aura",                                       // kTabAura
-  L"\u4E00\u822C",                               // kTabGeneral (一般)
-  L"\u8272",                                     // kColorSection (色)
+  L"Firefly",                                    // kTabFirefly
+  L"\u4E00\u822C",                               // kTabGeneral
+  L"\u8272",                                     // kColorSection
   L"\u30AF\u30EA\u30C3\u30AF\u3057\u3066\u753B\u9762\u7E01\u306E\u8272\u3092\u5909\u66F4\u3057\u307E\u3059", // kColorSub
-  L"\u65E5\u672C\u8A9E",                         // kColorJp (日本語)
-  L"\u82F1\u8A9E",                               // kColorEn (英語)
+  L"\u65E5\u672C\u8A9E",                         // kColorJp
+  L"\u82F1\u8A9E",                               // kColorEn
   L"\u30C7\u30D5\u30A9\u30EB\u30C8\u306E\u8272\u306B\u623B\u3059", // kColorReset
   L"\u623B\u3057\u307E\u3057\u305F",             // kColorResetDone
   L"\u30B0\u30E9\u30C7\u30FC\u30B7\u30E7\u30F3\u306E\u5E45", // kWidthSection
@@ -37,6 +38,18 @@ const wchar_t* kJa[static_cast<size_t>(StringId::kCount)] = {
   L"\u30A2\u30D7\u30EA\u30B1\u30FC\u30B7\u30E7\u30F3\u3092\u7D42\u4E86", // kQuit
   L"IME Aura",                                   // kQuitConfirmTitle
   L"IME Aura \u3092\u7D42\u4E86\u3057\u307E\u3059\u304B\uFF1F\n\u753B\u9762\u7E01\u306E\u30B0\u30E9\u30C7\u30FC\u30B7\u30E7\u30F3\u8868\u793A\u3082\u6D88\u3048\u307E\u3059\u3002", // kQuitConfirmBody
+  L"Firefly",                                    // kFireflyTitle
+  L"Firefly \u6A5F\u80FD\u3092\u6709\u52B9\u306B\u3059\u308B", // kFireflyEnable
+  L"\u5FDC\u7B54\u4E0D\u53EF",                   // kFireflyStateBusy
+  L"\u5FDC\u7B54\u53EF\u80FD",                   // kFireflyStateAvailable
+  L"CapsLock \u306E\u72B6\u614B",                // kFireflyCapsSection
+  L"\u6709\u52B9\u5316\u76F4\u524D\u306E\u72B6\u614B\u3092\u7DAD\u6301", // kFireflyCapsPreserve
+  L"\u5927\u6587\u5B57\u30D9\u30FC\u30B9",       // kFireflyCapsUppercase
+  L"\u5C0F\u6587\u5B57\u30D9\u30FC\u30B9",       // kFireflyCapsLowercase
+  L"CapsLock \u30AD\u30FC\u306E\u6A2A\u53D6\u308A: OK", // kFireflyCapsOk
+  L"LED \u5236\u5FA1: OK",                       // kFireflyLedOk
+  L"\u901A\u77E5\u6291\u5236: OK",               // kFireflyDndOk
+  L"\u3053\u306E\u74B0\u5883\u3067\u306F\u4E00\u90E8\u306E\u6A5F\u80FD\u304C\u5229\u7528\u3067\u304D\u307E\u305B\u3093", // kFireflyUnsupported
   L"\u8272\u3092\u9078\u629E",                   // kColorDialogTitle
   L"OK",                                         // kOk
   L"\u30AD\u30E3\u30F3\u30BB\u30EB",             // kCancel
@@ -47,6 +60,7 @@ const wchar_t* kJa[static_cast<size_t>(StringId::kCount)] = {
 const wchar_t* kEn[static_cast<size_t>(StringId::kCount)] = {
   L"IME Aura",                                   // kSettingsTitle
   L"Aura",                                       // kTabAura
+  L"Firefly",                                    // kTabFirefly
   L"General",                                    // kTabGeneral
   L"Color",                                      // kColorSection
   L"Click to change the screen edge color",      // kColorSub
@@ -75,6 +89,18 @@ const wchar_t* kEn[static_cast<size_t>(StringId::kCount)] = {
   L"Quit Application",                           // kQuit
   L"IME Aura",                                   // kQuitConfirmTitle
   L"Quit IME Aura?\nThe screen edge gradient will also disappear.", // kQuitConfirmBody
+  L"Firefly",                                    // kFireflyTitle
+  L"Enable Firefly",                             // kFireflyEnable
+  L"Do Not Disturb",                             // kFireflyStateBusy
+  L"Available",                                  // kFireflyStateAvailable
+  L"CapsLock state",                             // kFireflyCapsSection
+  L"Keep state before enabling",                 // kFireflyCapsPreserve
+  L"Uppercase base",                             // kFireflyCapsUppercase
+  L"Lowercase base",                             // kFireflyCapsLowercase
+  L"CapsLock interception: OK",                  // kFireflyCapsOk
+  L"LED control: OK",                            // kFireflyLedOk
+  L"Notification suppression: OK",               // kFireflyDndOk
+  L"Some features are unavailable on this system", // kFireflyUnsupported
   L"Choose Color",                               // kColorDialogTitle
   L"OK",                                         // kOk
   L"Cancel",                                     // kCancel

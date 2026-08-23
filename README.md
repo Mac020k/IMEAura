@@ -4,93 +4,169 @@
 
 # IME Aura
 
-IME Aura shows a subtle edge gradient on your display that reflects the current IME state (Japanese vs English input). It helps prevent typing in the wrong input mode.
+[日本語](README-ja.md)
 
-This repository ships a **native C++20** build (no Qt).
+**IME Aura** is a lightweight desktop utility that draws a subtle edge gradient on your display to show whether IME input is Japanese or English. It helps you avoid typing in the wrong input mode.
+
+The app is a native **C++20** project. Overlays and settings UIs use each OS’s native APIs.
+
+| Platform | Overlay | Settings UI |
+| --- | --- | --- |
+| **Windows** 10 1803+ | Windows.UI.Composition | Win32 + Direct2D / DirectWrite |
+| **macOS** 11+ | Edge `NSWindow` + `CAGradientLayer` | AppKit |
+| **Linux** | Wayland `wlr-layer-shell` (X11 fallback) | GTK 4 |
 
 ## Features
 
-- Real-time IME state detection (platform-native APIs)
-- Lightweight edge overlay (compositor-driven on Windows; edge windows on macOS/Linux)
+- Real-time IME state detection via platform APIs
+- Click-through edge overlay (always on top)
 - Multi-monitor follow (active window; cursor when hover-only)
-- Custom JP/EN colors with alpha, gradient width 1–100 px
+- Custom JP / EN colors with alpha; gradient width 1–100 px
 - Display modes: Always / Only while typing / Hidden (+ optional hover)
-- Click-through overlay; settings window + tray/menu-bar icon (close settings without quitting)
-- **Tabbed settings UI** — Aura / General tabs with independent scroll
-- **i18n** — Japanese and English UI with instant language switching
+- Tabbed settings (Aura / Firefly / General) with Japanese and English UI
+- Tray / menu-bar icon — closing settings hides the window; the app keeps running
+- **Firefly** (Windows): CapsLock as Available / Busy (Do Not Disturb) with LED + Quiet Hours
 
-> The former **Firefly** feature (CapsLock as busy / Do Not Disturb) has been removed from the product. Its user-facing capabilities and options are archived in [`Firefly.md`](Firefly.md).
+## Install
 
-## Requirements
+### Prebuilt binaries (recommended)
 
-| OS | Minimum | Overlay | Settings UI |
-| --- | --- | --- | --- |
-| Windows | 10 1803+ | Windows.UI.Composition (no D3D device in host) | Win32 + Direct2D / DirectWrite |
-| macOS | 11+ | 4× edge `NSWindow` + `CAGradientLayer` | AppKit |
-| Linux | Wayland compositor with `wlr-layer-shell` (X11 fallback) | 1×N shm + viewporter | GTK 4 |
+1. Open the [Releases](https://github.com/Mac020k/IMEAura/releases) page.
+2. Download the zip for your OS:
+   - `IMEAura-windows-x64.zip`
+   - `IMEAura-macos-arm64.zip`
+   - `IMEAura-linux-x64.zip`
+3. Extract and run:
+   - **Windows:** `IMEAura.exe` (static CRT — no Visual C++ redistributable required)
+   - **macOS:** `IMEAura.app`
+   - **Linux:** `./IMEAura`
 
-### Build tools
+Pushes to `main` publish new artifacts via GitHub Actions.
 
-- **CMake** 3.25+
-- **Windows**: Visual Studio 2026 (or 2022) Build Tools with **Desktop development with C++** and Windows SDK 10.0.22621+
-- **macOS**: Xcode CLT, Ninja
-- **Linux**: GCC or Clang, Ninja, `pkg-config`, dev packages: `libwayland-dev`, `wayland-protocols`, `libdbus-1-dev`, `libatspi2.0-dev`, `libgtk-4-dev`
+### Build from source
 
-## Build (CMake Presets)
+#### Requirements
+
+| Tool / OS | Notes |
+| --- | --- |
+| **CMake** | 3.25+ |
+| **Windows** | Visual Studio 2026 (or 2022) Build Tools with *Desktop development with C++*; Windows SDK 10.0.22621+ |
+| **macOS** | Xcode Command Line Tools, Ninja |
+| **Linux** | GCC or Clang, Ninja, `pkg-config`, plus: `libwayland-dev`, `wayland-protocols`, `libdbus-1-dev`, `libatspi2.0-dev`, `libgtk-4-dev` |
+
+#### Configure, build, test
 
 ```bash
-cmake --preset windows-msvc    # or macos-clang / linux-ninja
+# Choose your preset: windows-msvc | macos-clang | linux-ninja
+cmake --preset windows-msvc
 cmake --build --preset windows-msvc
-ctest --test-dir build/windows-msvc -C Release
+ctest --test-dir build/windows-msvc -C Release --output-on-failure
 ```
 
-Windows output: `build/windows-msvc/src/Release/IMEAura.exe` (static CRT, no VC++ redistributable).
+| Preset | Output binary |
+| --- | --- |
+| `windows-msvc` | `build/windows-msvc/src/Release/IMEAura.exe` |
+| `macos-clang` | `build/macos-clang/src/IMEAura` |
+| `linux-ninja` | `build/linux-ninja/src/IMEAura` |
+
+#### VS Code / Cursor
 
 1. Install extensions from `.vscode/extensions.json` (clangd + CMake Tools). Disable Microsoft C/C++ IntelliSense if prompted.
-2. `CMake: Configure` → preset `windows-msvc`
-3. Build task **CMake: build (windows-msvc Release)** or F5 with **IMEAura (Windows)**
+2. **CMake: Configure** → preset `windows-msvc` (or your platform preset).
+3. Build with **CMake: build (windows-msvc Release)** or press F5 with **IMEAura (Windows)**.
 
-`compile_commands.json` is copied to the repo root for clangd.
+`compile_commands.json` is copied to the repo root for clangd when available.
 
 ## Run
 
 ```bash
+# Windows
 ./build/windows-msvc/src/Release/IMEAura.exe
+
+# macOS / Linux
+./build/macos-clang/src/IMEAura
+./build/linux-ninja/src/IMEAura
 ```
 
-- Settings open on launch; closing the window hides it (app stays in the tray).
-- Quit from tray → **終了** (confirmation dialog).
+- Settings open on first launch. Closing the window hides it; the app stays in the tray / menu bar.
+- Quit from the tray → **終了** / **Quit** (confirmation dialog).
 
-### Probe mode (no overlay)
+### Probe mode (diagnostics, no overlay)
 
 ```bash
 IMEAura.exe --probe --json
 ```
 
+## Settings
+
+Stored as JSON (`src/core/settings.{h,cpp}`):
+
+| OS | Path |
+| --- | --- |
+| Windows | `%APPDATA%/IMEAura/settings.json` |
+| macOS | `~/Library/Application Support/IMEAura/settings.json` |
+| Linux | `$XDG_CONFIG_HOME/ime_aura/settings.json` (default `~/.config/ime_aura/`) |
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `color_jp` / `color_en` | `[r,g,b,a]` 0–255 | JP reddish / EN blue |
+| `display_mode` | `always` \| `on_focus` \| `hidden` | `always` |
+| `show_on_hover` | bool (only with `on_focus`) | `false` |
+| `ui_font_size` | `small` \| `medium` \| `large` | `medium` |
+| `gradient_width` | 1–100 | `15` |
+| `language` | `ja` \| `en` | `ja` |
+| `firefly_enabled` | bool | `false` |
+| `firefly_caps_mode` | `preserve` \| `uppercase` \| `lowercase` | `uppercase` |
+| `firefly_led_mode` | `auto` \| `hid` \| `none` | `auto` |
+
+## Firefly (Windows)
+
+Firefly remaps the physical **CapsLock** key to an Available / Busy (Do Not Disturb) toggle while IME Aura is running.
+
+| State | Meaning | CapsLock LED (if LED control is on) | Notifications |
+| --- | --- | --- | --- |
+| **Available** | Default after enable | Off | Normal |
+| **Busy** | After CapsLock press | On | Suppressed (Focus Assist / Quiet Hours) |
+
+- Enabling Firefly always starts in **Available**.
+- Each CapsLock press toggles Available ↔ Busy.
+- While Firefly is on, CapsLock no longer toggles system letter case; case follows `firefly_caps_mode`.
+- Disabling Firefly restores the previous CapsLock and Quiet Hours settings when possible.
+- Fail-closed: if the low-level keyboard hook cannot be installed, enable is refused and the UI toggle stays off.
+
+Other platforms have no Firefly backend (`create_firefly_backend()` returns `nullptr`).
+
+### CapsLock state (`firefly_caps_mode`)
+
+| Value | Effect |
+| --- | --- |
+| `preserve` | Keep CapsLock case polarity from just before enable |
+| `uppercase` | Letters default uppercase; Shift inverts |
+| `lowercase` | Letters default lowercase; Shift inverts |
+
+Japanese IME composition is passed through. Ctrl / Alt / Win shortcuts are not remapped.
+
+### LED mode (`firefly_led_mode`)
+
+| Value | Effect |
+| --- | --- |
+| `auto` | Prefer native CapsLock LED as Busy lamp; HID as fallback |
+| `hid` | Drive LED via HID output report only |
+| `none` | Do not drive CapsLock LED for Busy / Available |
+
+On Windows, CapsLock LED and letter case share one toggle bit. Firefly’s default path uses that bit as the Busy lamp and rewrites Latin A–Z so case follows `firefly_caps_mode` XOR Shift.
+
 ## Project layout
 
 ```
-src/core/           settings.json I/O, OverlayPolicy, tokens
-src/app/            entry point, app wiring
+src/app/            entry point and app wiring
+src/core/           settings, policy, i18n, Firefly state machine
 src/platform/       windows | macos | linux backends
-tests/              policy + settings unit tests
-Firefly.md          archived Firefly feature / options spec
+tests/              unit tests (settings, policy, i18n, Firefly, layout)
 docs/parity.md      functional checklist
-docs/bench.md       memory/CPU methodology
+docs/bench.md       memory / CPU measurement notes
 ```
-
-## Settings file
-
-Schema is implemented in `src/core/settings.{h,cpp}`:
-
-- Windows: `%APPDATA%/IMEAura/settings.json`
-- macOS: `~/Library/Application Support/IMEAura/settings.json`
-- Linux: `$XDG_CONFIG_HOME/ime_aura/settings.json`
-
-## Releases
-
-Pushes to `main` build native artifacts for Windows, Linux, and macOS via GitHub Actions.
 
 ## License
 
-MIT License — see `LICENSE`.
+MIT License — see [LICENSE](LICENSE). Third-party notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
