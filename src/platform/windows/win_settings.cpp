@@ -1,5 +1,6 @@
 #include "platform/windows/win_settings_api.h"
 
+#include "core/firefly.h"
 #include "core/i18n.h"
 #include "core/tokens.h"
 #include "platform/windows/win_about.h"
@@ -40,11 +41,12 @@ constexpr UINT kTabAnimTimerId = 8;
 constexpr UINT kTabAnimFrameMs = 16;
 constexpr float kTabAnimDurationMs = 200.f;
 
-enum class Tab { Aura, General };
+enum class Tab { Aura, Firefly, General };
 
 enum class Hit : int {
   None = 0,
   TabAura,
+  TabFirefly,
   TabGeneral,
   JpSwatch,
   EnSwatch,
@@ -64,6 +66,10 @@ enum class Hit : int {
   About,
   Quit,
   ScrollBar,
+  FireflyToggle,
+  FireflyCapsPreserve,
+  FireflyCapsUppercase,
+  FireflyCapsLowercase,
 };
 
 enum class AlignH { Left, Center };
@@ -482,6 +488,7 @@ class SettingsUi {
   }
 
   RECT active_tab_rect() const {
+    if (active_tab_ == Tab::Firefly) return tab_firefly_;
     if (active_tab_ == Tab::General) return tab_general_;
     return tab_aura_;
   }
@@ -599,14 +606,15 @@ class SettingsUi {
 
       const wchar_t* tab_labels[] = {
         tr(lang(), StringId::kTabAura),
+        tr(lang(), StringId::kTabFirefly),
         tr(lang(), StringId::kTabGeneral)
       };
-      const RECT* tab_rects[] = { &tab_aura_, &tab_general_ };
-      const Tab tabs[] = { Tab::Aura, Tab::General };
-      const int tab_w = static_cast<int>(w) / 2;
-      for (int i = 0; i < 2; ++i) {
+      const RECT* tab_rects[] = { &tab_aura_, &tab_firefly_, &tab_general_ };
+      const Tab tabs[] = { Tab::Aura, Tab::Firefly, Tab::General };
+      const int tab_w = static_cast<int>(w) / 3;
+      for (int i = 0; i < 3; ++i) {
         const_cast<RECT*>(tab_rects[i])->left = tab_w * i;
-        const_cast<RECT*>(tab_rects[i])->right = (i == 1) ? static_cast<int>(w) : tab_w * (i + 1);
+        const_cast<RECT*>(tab_rects[i])->right = (i == 2) ? static_cast<int>(w) : tab_w * (i + 1);
         const_cast<RECT*>(tab_rects[i])->top = 0;
         const_cast<RECT*>(tab_rects[i])->bottom = tab_h;
         const bool active = (active_tab_ == tabs[i]);
@@ -676,6 +684,96 @@ class SettingsUi {
       paint_check(hover_box_, settings_.show_on_hover, tr(lang(), StringId::kDisplayHover), body_fmt.Get());
     }
     paint_radio(mode_hidden_, settings_.display_mode == kDisplayModeHidden, tr(lang(), StringId::kDisplayHidden), body_fmt.Get());
+
+    } else if (active_tab_ == Tab::Firefly) {
+      const int m = dip(kUiMargin);
+      const int inner = content_width();
+      const int row = um.row_h;
+      int fy = m;
+      RECT ff_title = box(m, fy, inner, um.title_h);
+      fy += um.title_h + dip(kUiRowGap);
+      ff_toggle_ = box(m, fy, inner, row);
+      fy += row + dip(kUiSectionGap);
+      const float caps_alpha = settings_.firefly_enabled ? 1.f : 0.45f;
+      ff_caps_title_ = box(m, fy, inner, um.sub_h);
+      fy += um.sub_h + dip(kUiRowGap);
+      ff_caps_preserve_ = box(m, fy, inner, row);
+      fy += row + dip(kUiSpace1);
+      ff_caps_upper_ = box(m, fy, inner, row);
+      fy += row + dip(kUiSpace1);
+      ff_caps_lower_ = box(m, fy, inner, row);
+      fy += row + dip(kUiSectionGap);
+      ff_status_ = box(m, fy, inner, row);
+      fy += row + dip(kUiRowGap);
+      ff_caps_ok_ = box(m, fy, inner, um.sub_h);
+      fy += um.sub_h + dip(kUiSpace1);
+      ff_led_ok_ = box(m, fy, inner, um.sub_h);
+      fy += um.sub_h + dip(kUiSpace1);
+      ff_dnd_ok_ = box(m, fy, inner, um.sub_h);
+      fy += um.sub_h + dip(kUiSectionGap);
+      tab_content_h_[1] = fy;
+
+      draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kFireflyTitle), r2f(ff_title), C(kUiText));
+
+      // Toggle track + knob
+      {
+        const int tw = dip(kUiToggleW);
+        const int th = dip(kUiToggleH);
+        const int knob = dip(kUiToggleKnob);
+        const int ty = ff_toggle_.top + (row - th) / 2;
+        const float track = static_cast<float>(ff_toggle_.left + dip(4));
+        const D2D1_RECT_F trc = D2D1::RectF(track, static_cast<float>(ty), track + tw, static_cast<float>(ty + th));
+        const float v = settings_.firefly_enabled ? 1.f : 0.f;
+        fill_round(rt_.Get(), trc, static_cast<float>(th) * 0.5f,
+                   v > 0.5f ? C(kDefaultColorEn) : C(kUiFill));
+        const float kx = trc.left + 3.f + (tw - knob - 6) * v;
+        const float ky = trc.top + (th - knob) * 0.5f;
+        ComPtr<ID2D1SolidColorBrush> knob_br;
+        rt_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), knob_br.GetAddressOf());
+        if (knob_br) {
+          rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(kx + knob * 0.5f, ky + knob * 0.5f), knob * 0.5f, knob * 0.5f),
+                           knob_br.Get());
+        }
+        D2D1_RECT_F label = r2f(ff_toggle_);
+        label.left = trc.right + static_cast<float>(dip(kUiRowGap));
+        draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kFireflyEnable), label, C(kUiText), AlignH::Left,
+                  AlignV::Center);
+      }
+
+      draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflyCapsSection), r2f(ff_caps_title_),
+                C(kUiTextSecondary, caps_alpha));
+      paint_radio(ff_caps_preserve_, settings_.firefly_caps_mode == kFireflyCapsPreserve,
+                  tr(lang(), StringId::kFireflyCapsPreserve), body_fmt.Get(), caps_alpha);
+      paint_radio(ff_caps_upper_, settings_.firefly_caps_mode == kFireflyCapsUppercase,
+                  tr(lang(), StringId::kFireflyCapsUppercase), body_fmt.Get(), caps_alpha);
+      paint_radio(ff_caps_lower_, settings_.firefly_caps_mode == kFireflyCapsLowercase,
+                  tr(lang(), StringId::kFireflyCapsLowercase), body_fmt.Get(), caps_alpha);
+
+      if (settings_.firefly_enabled) {
+        draw_text(rt_.Get(), body_fmt.Get(),
+                  firefly_active_ ? tr(lang(), StringId::kFireflyStateBusy)
+                                  : tr(lang(), StringId::kFireflyStateAvailable),
+                  r2f(ff_status_), C(kUiTextSecondary), AlignH::Left, AlignV::Center);
+        if (firefly_caps_ok_) {
+          draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflyCapsOk), r2f(ff_caps_ok_),
+                    C(kUiTextSecondary), AlignH::Left, AlignV::Center);
+        }
+        if (firefly_led_ok_) {
+          draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflyLedOk), r2f(ff_led_ok_),
+                    C(kUiTextSecondary), AlignH::Left, AlignV::Center);
+        }
+        if (firefly_dnd_ok_) {
+          draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflyDndOk), r2f(ff_dnd_ok_),
+                    C(kUiTextSecondary), AlignH::Left, AlignV::Center);
+        }
+        if (!firefly_caps_ok_ || !firefly_led_ok_ || !firefly_dnd_ok_) {
+          RECT uns = ff_dnd_ok_;
+          uns.top = ff_dnd_ok_.bottom + dip(kUiRowGap);
+          uns.bottom = uns.top + um.sub_h;
+          draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflyUnsupported), r2f(uns),
+                    C(kUiTextSecondary), AlignH::Left, AlignV::Center);
+        }
+      }
 
     } else {
     // General tab — font size, language, about, quit
@@ -964,6 +1062,7 @@ class SettingsUi {
 
   Hit hit_test(int x, int y) const {
     if (contains(tab_aura_, x, y)) return Hit::TabAura;
+    if (contains(tab_firefly_, x, y)) return Hit::TabFirefly;
     if (contains(tab_general_, x, y)) return Hit::TabGeneral;
 
     const int tab_h = dip(kUiTabBarHeight);
@@ -985,6 +1084,13 @@ class SettingsUi {
       if (settings_.display_mode == kDisplayModeOnFocus && hover_box_.bottom > hover_box_.top &&
           contains(hover_box_, x, cy))
         return Hit::Hover;
+    } else if (active_tab_ == Tab::Firefly) {
+      if (contains(ff_toggle_, x, cy)) return Hit::FireflyToggle;
+      if (settings_.firefly_enabled) {
+        if (contains(ff_caps_preserve_, x, cy)) return Hit::FireflyCapsPreserve;
+        if (contains(ff_caps_upper_, x, cy)) return Hit::FireflyCapsUppercase;
+        if (contains(ff_caps_lower_, x, cy)) return Hit::FireflyCapsLowercase;
+      }
     } else {
       if (contains(font_small_, x, cy)) return Hit::FontSmall;
       if (contains(font_medium_, x, cy)) return Hit::FontMedium;
@@ -1065,13 +1171,38 @@ class SettingsUi {
         scroll_y_ = tab_scroll_[0];
         InvalidateRect(hwnd_, nullptr, FALSE);
         break;
+      case Hit::TabFirefly:
+        if (active_tab_ != Tab::Firefly) {
+          start_tab_anim(active_tab_rect(), tab_firefly_);
+          active_tab_ = Tab::Firefly;
+        }
+        scroll_y_ = tab_scroll_[1];
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        break;
       case Hit::TabGeneral:
         if (active_tab_ != Tab::General) {
           start_tab_anim(active_tab_rect(), tab_general_);
           active_tab_ = Tab::General;
         }
-        scroll_y_ = tab_scroll_[1];
+        scroll_y_ = tab_scroll_[2];
         InvalidateRect(hwnd_, nullptr, FALSE);
+        break;
+      case Hit::FireflyToggle:
+        settings_.firefly_enabled = !settings_.firefly_enabled;
+        if (!settings_.firefly_enabled) firefly_active_ = false;
+        emit();
+        break;
+      case Hit::FireflyCapsPreserve:
+        settings_.firefly_caps_mode = kFireflyCapsPreserve;
+        emit();
+        break;
+      case Hit::FireflyCapsUppercase:
+        settings_.firefly_caps_mode = kFireflyCapsUppercase;
+        emit();
+        break;
+      case Hit::FireflyCapsLowercase:
+        settings_.firefly_caps_mode = kFireflyCapsLowercase;
+        emit();
         break;
       case Hit::ScrollBar:
         dragging_scroll_ = true;
@@ -1198,11 +1329,29 @@ class SettingsUi {
   RECT rule4_{}, about_{}, quit_{}, scroll_bar_{};
 
   Tab active_tab_ = Tab::Aura;
-  RECT tab_aura_{}, tab_general_{};
-  int tab_scroll_[2]{0, 0};
-  int tab_content_h_[2]{0, 0};
+  RECT tab_aura_{}, tab_firefly_{}, tab_general_{};
+  int tab_scroll_[3]{0, 0, 0};
+  int tab_content_h_[3]{0, 0, 0};
   RECT lang_ja_{}, lang_en_{}, lang_rule_{};
+  RECT ff_toggle_{}, ff_caps_title_{}, ff_caps_preserve_{}, ff_caps_upper_{}, ff_caps_lower_{};
+  RECT ff_status_{}, ff_caps_ok_{}, ff_led_ok_{}, ff_dnd_ok_{};
+  bool firefly_active_ = false;
+  bool firefly_caps_ok_ = true;
+  bool firefly_led_ok_ = true;
+  bool firefly_dnd_ok_ = true;
   bool save_pending_ = false;
+
+ public:
+  void set_firefly_active(bool active) {
+    if (firefly_active_ == active) return;
+    firefly_active_ = active;
+    firefly_caps_ok_ = true;
+    firefly_led_ok_ = true;
+    firefly_dnd_ok_ = true;
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+  }
+
+ private:
   float tab_anim_t_ = 1.f;
   float tab_from_left_ = 0.f;
   float tab_from_right_ = 0.f;
@@ -1251,6 +1400,7 @@ void hide() { g_ui.hide(); }
 bool visible() { return g_ui.visible(); }
 HWND hwnd() { return g_ui.hwnd(); }
 void sync(const Settings& settings) { g_ui.sync(settings); }
+void set_firefly_active(bool active) { g_ui.set_firefly_active(active); }
 
 }  // namespace win_settings
 }  // namespace imeaura

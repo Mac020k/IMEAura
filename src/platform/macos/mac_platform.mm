@@ -1,7 +1,9 @@
 #include "platform/macos/mac_platform.h"
 
+#include "platform/firefly_host.h"
+#include "platform/macos/mac_ime.h"
+
 #include <AppKit/AppKit.h>
-#include <Carbon/Carbon.h>
 #include <CoreGraphics/CoreGraphics.h>
 #include <QuartzCore/QuartzCore.h>
 
@@ -70,22 +72,8 @@ class MacEdges {
 MacEdges g_edges;
 Settings g_settings;
 NSStatusItem* g_status = nil;
-
-bool tis_japanese() {
-  TISInputSourceRef src = TISCopyCurrentKeyboardInputSource();
-  if (!src) return false;
-  CFStringRef langs = static_cast<CFStringRef>(TISGetInputSourceProperty(src, kTISPropertyInputSourceLanguages));
-  bool jp = false;
-  if (langs && CFGetTypeID(langs) == CFStringGetTypeID()) {
-    char buf[256];
-    if (CFStringGetCString(langs, buf, sizeof(buf), kCFStringEncodingUTF8)) {
-      std::string s(buf);
-      jp = s.find("ja") != std::string::npos || s.find("Japanese") != std::string::npos;
-    }
-  }
-  CFRelease(src);
-  return jp;
-}
+MacPlatformBackend* g_self = nullptr;
+FireflyHost g_firefly;
 
 Rect primary_monitor_rect() {
   NSScreen* screen = [NSScreen mainScreen];
@@ -95,29 +83,44 @@ Rect primary_monitor_rect() {
               static_cast<int>(f.size.height)};
 }
 
+void refresh_policy() {
+  if (!g_self) return;
+  PolicyInput in{};
+  in.ime_japanese = mac_is_japanese_input();
+  in.reduce_motion = g_self->prefers_reduced_motion();
+  const auto policy = evaluate_policy(g_settings, in);
+  g_self->apply_policy(g_settings, policy);
+}
+
 }  // namespace
 
 bool MacPlatformBackend::init() {
+  g_self = this;
   load_settings(g_settings);
+  g_firefly.set_on_toggle([] { refresh_policy(); });
+  if (g_settings.firefly_enabled) {
+    if (!g_firefly.apply(g_settings, g_settings)) {
+      save_settings(g_settings);
+    }
+  }
   g_status = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
   g_status.button.title = @"IME";
   return true;
 }
 
 void MacPlatformBackend::shutdown() {
+  g_firefly.shutdown();
   if (g_status) {
     [[NSStatusBar systemStatusBar] removeStatusItem:g_status];
     g_status = nil;
   }
+  g_self = nullptr;
 }
 
 int MacPlatformBackend::run() {
   [NSApplication sharedApplication];
-  PolicyInput in{};
-  in.ime_japanese = is_japanese_input();
-  in.reduce_motion = prefers_reduced_motion();
-  const auto policy = evaluate_policy(g_settings, in);
-  apply_policy(g_settings, policy);
+  refresh_policy();
+  [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer*) { refresh_policy(); }];
   [NSApp run];
   return 0;
 }
@@ -126,7 +129,7 @@ bool MacPlatformBackend::prefers_reduced_motion() {
   return [[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceMotion];
 }
 
-bool MacPlatformBackend::is_japanese_input() { return tis_japanese(); }
+bool MacPlatformBackend::is_japanese_input() { return mac_is_japanese_input(); }
 bool MacPlatformBackend::is_text_input_focused() { return false; }
 bool MacPlatformBackend::is_text_input_hovered() { return false; }
 Rect MacPlatformBackend::get_active_monitor_rect() { return primary_monitor_rect(); }

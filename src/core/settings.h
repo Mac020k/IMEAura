@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/color.h"
+#include "core/firefly.h"
 #include "core/tokens.h"
 
 #include <string>
@@ -25,6 +26,9 @@ struct Settings {
   bool show_on_hover = false;
   std::string ui_font_size = kFontSizeMedium;
   int gradient_width = kDefaultGradientWidth;
+  bool firefly_enabled = false;
+  std::string firefly_led_mode = kFireflyLedAuto;
+  std::string firefly_caps_mode = kFireflyCapsUppercase;
   std::string language = kLangJa;
 };
 

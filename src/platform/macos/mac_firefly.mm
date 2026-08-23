@@ -1,0 +1,344 @@
+#include "platform/macos/mac_firefly.h"
+
+#include "core/firefly.h"
+#include "platform/macos/mac_ime.h"
+
+#include <CoreFoundation/CoreFoundation.h>
+#include <dispatch/dispatch.h>
+
+#include <atomic>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace imeaura {
+namespace {
+
+constexpr int64_t kFireflyInjectTag = 0x46495245u;  // 'FIRE'
+constexpr CGKeyCode kVkCapsLock = 0x39;
+
+MacFireflyBackend* g_self = nullptr;
+CFMachPortRef g_tap_port = nullptr;
+
+bool RunCommand(const std::string& cmd) { return std::system(cmd.c_str()) == 0; }
+
+bool CapsLockOn() { return CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, kVkCapsLock); }
+
+void SendTaggedVk(CGKeyCode key, bool down) {
+  CGEventRef ev = CGEventCreateKeyboardEvent(nullptr, key, down);
+  if (!ev) return;
+  CGEventSetIntegerValueField(ev, kCGEventSourceUserData, kFireflyInjectTag);
+  CGEventPost(kCGHIDEventTap, ev);
+  CFRelease(ev);
+}
+
+void SetCapsLockState(bool on) {
+  if (CapsLockOn() == on) return;
+  SendTaggedVk(kVkCapsLock, true);
+  SendTaggedVk(kVkCapsLock, false);
+}
+
+bool ShiftDown() {
+  return CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, 0x38) ||  // Left shift
+         CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, 0x3C);    // Right shift
+}
+
+bool ModifiersDown() {
+  return CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, 0x3B) ||  // Control
+         CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, 0x3A) ||  // Option
+         CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, 0x37) ||  // Command
+         CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, 0x36);    // Right command
+}
+
+void SendUnicodeChar(CFStringRef ch, bool down) {
+  UniChar uni[2]{};
+  CFIndex len = 0;
+  CFStringGetCharacters(ch, CFRangeMake(0, CFStringGetLength(ch)), uni);
+  len = CFStringGetLength(ch);
+  if (len <= 0) return;
+  CGEventRef ev = CGEventCreateKeyboardEvent(nullptr, 0, down);
+  if (!ev) return;
+  CGEventKeyboardSetUnicodeString(ev, static_cast<UniCharCount>(len), uni);
+  CGEventSetIntegerValueField(ev, kCGEventSourceUserData, kFireflyInjectTag);
+  CGEventPost(kCGHIDEventTap, ev);
+  CFRelease(ev);
+}
+
+bool IsInjected(CGEventRef event) {
+  return CGEventGetIntegerValueField(event, kCGEventSourceUserData) == kFireflyInjectTag;
+}
+
+std::string DndBackupPath() {
+  const char* home = std::getenv("HOME");
+  if (!home) return {};
+  return (std::filesystem::path(home) / "Library" / "Application Support" / "IMEAura" / "dnd_backup.txt").string();
+}
+
+bool ReadDndState(bool& on) {
+  const std::string cmd =
+      "defaults -currentHost read com.apple.notificationcenterui doNotDisturb 2>/dev/null";
+  FILE* f = popen(cmd.c_str(), "r");
+  if (!f) return false;
+  char buf[64]{};
+  const bool got = fgets(buf, sizeof(buf), f) != nullptr;
+  pclose(f);
+  if (!got) return false;
+  on = std::strncmp(buf, "1", 1) == 0 || std::strncmp(buf, "true", 4) == 0;
+  return true;
+}
+
+bool WriteDndState(bool on) {
+  const char* val = on ? "true" : "false";
+  std::string cmd =
+      std::string("defaults -currentHost write com.apple.notificationcenterui doNotDisturb -boolean ") + val;
+  return RunCommand(cmd);
+}
+
+bool ProbeDnd() {
+  bool dummy = false;
+  return ReadDndState(dummy) || WriteDndState(false);
+}
+
+void BackupDnd() {
+  bool on = false;
+  if (!ReadDndState(on)) return;
+  auto path = DndBackupPath();
+  if (path.empty()) return;
+  std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+  std::ofstream f(path);
+  f << (on ? "1" : "0");
+}
+
+void RestoreDnd() {
+  auto path = DndBackupPath();
+  if (path.empty() || !std::filesystem::exists(path)) return;
+  std::ifstream f(path);
+  char c = '0';
+  f >> c;
+  WriteDndState(c == '1');
+  std::filesystem::remove(path);
+}
+
+CGEventRef EventTapCallback(CGEventTapProxy, CGEventType type, CGEventRef event, void*) {
+  if (!g_self) return event;
+  if (IsInjected(event)) return event;
+
+  if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
+    if (g_tap_port) CGEventTapEnable(g_tap_port, true);
+    return event;
+  }
+
+  if (type != kCGEventKeyDown && type != kCGEventKeyUp) return event;
+
+  const CGKeyCode key = static_cast<CGKeyCode>(CGEventGetIntegerValueField(event, kCGEventKeyKeyCode));
+  const bool down = type == kCGEventKeyDown;
+
+  if (key == kVkCapsLock) {
+    if (down) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        if (g_self) g_self->handle_toggle();
+      });
+    }
+    return nullptr;
+  }
+
+  if (key >= 0x00 && key <= 0x19) {  // A-Z on macOS virtual keycodes
+    if (!ModifiersDown() && !mac_is_japanese_input()) {
+      if (down && g_self) {
+        const bool upper = firefly_want_uppercase(g_self->caps_mode_for_remap(), ShiftDown(),
+                                                  g_self->preserved_caps_for_remap());
+        const wchar_t ch = static_cast<wchar_t>((upper ? L'A' : L'a') + (key - 0x00));
+        CFStringRef s = CFStringCreateWithCharacters(nullptr, reinterpret_cast<const UniChar*>(&ch), 1);
+        SendUnicodeChar(s, true);
+        SendUnicodeChar(s, false);
+        CFRelease(s);
+      }
+      return nullptr;
+    }
+  }
+
+  return event;
+}
+
+}  // namespace
+
+struct MacFireflyBackend::Impl {
+  CFMachPortRef tap_port = nullptr;
+  CFRunLoopSourceRef tap_source = nullptr;
+  std::function<void()> on_toggle;
+  std::atomic<bool> busy{false};
+  std::string caps_mode = kFireflyCapsUppercase;
+  std::string led_mode = kFireflyLedAuto;
+  bool preserved_caps_on = false;
+  bool saved_caps_on = false;
+  bool dnd_ok = false;
+  bool dnd_backed_up = false;
+
+  std::mutex dnd_mu;
+  std::condition_variable dnd_cv;
+  std::atomic<bool> dnd_stop{true};
+  bool dnd_target = false;
+  bool dnd_pending = false;
+  std::thread dnd_thread;
+
+  void dnd_worker() {
+    while (true) {
+      bool target = false;
+      {
+        std::unique_lock lk(dnd_mu);
+        dnd_cv.wait(lk, [&] { return dnd_pending || dnd_stop.load(); });
+        if (dnd_stop.load() && !dnd_pending) break;
+        target = dnd_target;
+        dnd_pending = false;
+      }
+      WriteDndState(target);
+    }
+  }
+};
+
+MacFireflyBackend::MacFireflyBackend() = default;
+MacFireflyBackend::~MacFireflyBackend() { stop(); }
+
+FireflyCapabilities MacFireflyBackend::capabilities() const {
+  FireflyCapabilities c{};
+  c.can_intercept_caps = true;
+  c.can_drive_led = true;
+  c.can_set_dnd = impl_ ? impl_->dnd_ok : ProbeDnd();
+  return c;
+}
+
+bool MacFireflyBackend::start(std::function<void()> on_toggle, const std::string& caps_mode) {
+  if (impl_) return true;
+  impl_ = new Impl();
+  impl_->on_toggle = std::move(on_toggle);
+  impl_->caps_mode = caps_mode.empty() ? kFireflyCapsUppercase : caps_mode;
+  impl_->busy.store(false);
+  impl_->saved_caps_on = CapsLockOn();
+  impl_->preserved_caps_on = impl_->saved_caps_on;
+  impl_->dnd_ok = ProbeDnd();
+
+  if (impl_->caps_mode == kFireflyCapsUppercase) {
+    SetCapsLockState(true);
+  } else if (impl_->caps_mode == kFireflyCapsLowercase) {
+    SetCapsLockState(false);
+  }
+
+  RestoreDnd();
+  BackupDnd();
+  impl_->dnd_backed_up = true;
+  impl_->dnd_stop.store(false);
+  impl_->dnd_thread = std::thread([this] { impl_->dnd_worker(); });
+
+  g_self = this;
+  const CGEventMask mask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) |
+                           CGEventMaskBit(kCGEventTapDisabledByTimeout) |
+                           CGEventMaskBit(kCGEventTapDisabledByUserInput);
+  impl_->tap_port = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault, mask,
+                                     EventTapCallback, nullptr);
+  g_tap_port = impl_->tap_port;
+  if (!impl_->tap_port) {
+    stop();
+    return false;
+  }
+
+  impl_->tap_source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, impl_->tap_port, 0);
+  CFRunLoopAddSource(CFRunLoopGetMain(), impl_->tap_source, kCFRunLoopCommonModes);
+  CGEventTapEnable(impl_->tap_port, true);
+
+  set_led(false);
+  set_dnd(false);
+  return true;
+}
+
+void MacFireflyBackend::stop() {
+  if (!impl_) return;
+
+  if (impl_->tap_source) {
+    CFRunLoopRemoveSource(CFRunLoopGetMain(), impl_->tap_source, kCFRunLoopCommonModes);
+    CFRelease(impl_->tap_source);
+    impl_->tap_source = nullptr;
+  }
+  if (impl_->tap_port) {
+    CGEventTapEnable(impl_->tap_port, false);
+    CFRelease(impl_->tap_port);
+    impl_->tap_port = nullptr;
+  }
+  g_self = nullptr;
+  g_tap_port = nullptr;
+
+  {
+    std::lock_guard lk(impl_->dnd_mu);
+    impl_->dnd_stop.store(true);
+    impl_->dnd_cv.notify_one();
+  }
+  if (impl_->dnd_thread.joinable()) impl_->dnd_thread.join();
+
+  if (impl_->dnd_backed_up) RestoreDnd();
+  SetCapsLockState(impl_->saved_caps_on);
+  delete impl_;
+  impl_ = nullptr;
+}
+
+void MacFireflyBackend::set_caps_mode(const std::string& mode) {
+  if (!impl_) return;
+  impl_->caps_mode = mode.empty() ? kFireflyCapsUppercase : mode;
+  if (mode == kFireflyCapsUppercase) {
+    SetCapsLockState(true);
+  } else if (mode == kFireflyCapsLowercase) {
+    SetCapsLockState(false);
+  } else if (mode == kFireflyCapsPreserve) {
+    impl_->preserved_caps_on = CapsLockOn();
+  }
+  set_led(impl_->busy.load());
+}
+
+void MacFireflyBackend::set_led_mode(const std::string& mode) {
+  if (!impl_) return;
+  impl_->led_mode = mode.empty() ? kFireflyLedAuto : mode;
+  set_led(impl_->busy.load());
+}
+
+void MacFireflyBackend::set_led(bool on) {
+  if (!impl_) return;
+  if (impl_->led_mode == kFireflyLedNone) return;
+  // macOS has no separate HID LED API in this backend; auto uses CapsLock state as Busy lamp.
+  if (impl_->led_mode == kFireflyLedHid) return;
+  SetCapsLockState(on);
+}
+
+void MacFireflyBackend::set_dnd(bool on) {
+  if (!impl_) return;
+  std::lock_guard lk(impl_->dnd_mu);
+  impl_->dnd_target = on;
+  impl_->dnd_pending = true;
+  impl_->dnd_cv.notify_one();
+}
+
+bool MacFireflyBackend::is_active() const { return impl_ && impl_->busy.load(); }
+
+std::string MacFireflyBackend::caps_mode_for_remap() const {
+  return impl_ ? impl_->caps_mode : kFireflyCapsUppercase;
+}
+
+bool MacFireflyBackend::preserved_caps_for_remap() const { return impl_ ? impl_->preserved_caps_on : false; }
+
+void MacFireflyBackend::handle_toggle() {
+  if (!impl_) return;
+  const bool next = !impl_->busy.load();
+  impl_->busy.store(next);
+  FireflyInput in{};
+  in.enabled = true;
+  in.toggle_requested = true;
+  in.current_active = !next;
+  const FireflyOutput out = evaluate_firefly(in);
+  set_led(out.want_led_on);
+  set_dnd(out.want_dnd);
+  if (impl_->on_toggle) impl_->on_toggle();
+}
+
+}  // namespace imeaura
