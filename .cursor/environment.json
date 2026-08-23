@@ -1,0 +1,4 @@
+{
+  "name": "IME Aura",
+  "install": "bash .cursor/install.sh"
+}
