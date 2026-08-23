@@ -2,11 +2,13 @@
 
 #include "platform/firefly_host.h"
 #include "platform/linux/linux_ime.h"
+#include "platform/linux/linux_x11_edges.h"
 
 #include <X11/Xlib.h>
 
 #include <chrono>
 #include <iostream>
+#include <memory>
 #include <thread>
 
 namespace imeaura {
@@ -15,7 +17,13 @@ namespace {
 Settings g_settings;
 LinuxPlatformBackend* g_self = nullptr;
 FireflyHost g_firefly;
+LinuxX11Edges g_edges;
+Display* g_dpy = nullptr;
 bool g_running = false;
+Rect g_last_monitor{};
+int g_last_width = -1;
+Rgba g_last_color{};
+bool g_last_visible = false;
 
 Rect primary_monitor_rect(Display* dpy) {
   if (!dpy) return {};
@@ -38,18 +46,35 @@ void refresh_policy() {
 bool LinuxPlatformBackend::init() {
   g_self = this;
   load_settings(g_settings);
+
+  g_dpy = XOpenDisplay(nullptr);
+  if (!g_dpy) {
+    std::cerr << "Linux: XOpenDisplay failed\n";
+    return false;
+  }
+  if (!g_edges.init(g_dpy)) {
+    XCloseDisplay(g_dpy);
+    g_dpy = nullptr;
+    return false;
+  }
+
   g_firefly.set_on_toggle([] { refresh_policy(); });
   if (g_settings.firefly_enabled) {
     if (!g_firefly.apply(g_settings, g_settings)) {
       save_settings(g_settings);
     }
   }
-  std::cerr << "Linux: IME Aura host (X11 Firefly + overlay stub)\n";
+  std::cerr << "Linux: IME Aura host (X11 edges + Firefly)\n";
   return true;
 }
 
 void LinuxPlatformBackend::shutdown() {
   g_firefly.shutdown();
+  g_edges.shutdown();
+  if (g_dpy) {
+    XCloseDisplay(g_dpy);
+    g_dpy = nullptr;
+  }
   g_self = nullptr;
 }
 
@@ -72,6 +97,7 @@ bool LinuxPlatformBackend::is_text_input_focused() { return false; }
 bool LinuxPlatformBackend::is_text_input_hovered() { return false; }
 
 Rect LinuxPlatformBackend::get_active_monitor_rect() {
+  if (g_dpy) return primary_monitor_rect(g_dpy);
   Display* dpy = XOpenDisplay(nullptr);
   if (!dpy) return {};
   const Rect r = primary_monitor_rect(dpy);
@@ -83,7 +109,20 @@ Rect LinuxPlatformBackend::get_cursor_monitor_rect() { return get_active_monitor
 
 void LinuxPlatformBackend::apply_policy(const Settings& settings, const PolicyOutput& policy) {
   g_settings = settings;
-  (void)policy;
+  const Rect mon = get_active_monitor_rect();
+  if (mon != g_last_monitor || settings.gradient_width != g_last_width) {
+    g_edges.layout(mon, settings.gradient_width);
+    g_last_monitor = mon;
+    g_last_width = settings.gradient_width;
+  }
+  if (policy.target_color != g_last_color) {
+    g_edges.set_color(policy.target_color);
+    g_last_color = policy.target_color;
+  }
+  if (policy.visible != g_last_visible) {
+    g_edges.set_visible(policy.visible);
+    g_last_visible = policy.visible;
+  }
 }
 
 void LinuxPlatformBackend::show_settings_window() {}
@@ -97,10 +136,14 @@ ProbeState LinuxPlatformBackend::probe_state(const Settings& settings) {
   ProbeState st{};
   st.ime_japanese = in.ime_japanese;
   st.visible = p.visible;
-  Display* dpy = XOpenDisplay(nullptr);
-  if (dpy) {
-    st.monitor_rect = primary_monitor_rect(dpy);
-    XCloseDisplay(dpy);
+  if (g_dpy) {
+    st.monitor_rect = primary_monitor_rect(g_dpy);
+  } else {
+    Display* dpy = XOpenDisplay(nullptr);
+    if (dpy) {
+      st.monitor_rect = primary_monitor_rect(dpy);
+      XCloseDisplay(dpy);
+    }
   }
   return st;
 }

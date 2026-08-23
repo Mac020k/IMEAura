@@ -9,6 +9,7 @@ add_library(imeaura_platform STATIC
   linux_platform.cpp
   linux_ime.cpp
   linux_firefly.cpp
+  linux_x11_edges.cpp
 )
 
 target_include_directories(imeaura_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
