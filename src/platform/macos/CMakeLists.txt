@@ -2,7 +2,10 @@ cmake_minimum_required(VERSION 3.25)
 
 add_library(imeaura_platform STATIC
   ../platform_factory.cpp
+  ../firefly_host.cpp
   mac_platform.mm
+  mac_ime.mm
+  mac_firefly.mm
 )
 
 target_include_directories(imeaura_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)

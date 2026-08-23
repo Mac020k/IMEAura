@@ -25,7 +25,7 @@
 - 表示モード: 常に表示 / 入力中のみ / 非表示 (+ 任意のホバー表示)
 - タブ付き設定 (Aura / Firefly / 一般) — UI は日本語・英語対応
 - トレイ / メニューバーアイコン — 設定を閉じてもウィンドウは隠れるだけでアプリは継続動作
-- **Firefly** (Windows): CapsLock を Available / Busy (おやすみモード) に割当 — LED + Quiet Hours
+- **Firefly**: CapsLock を Available / Busy (おやすみモード) に割当 — LED + 通知抑制 (Windows / macOS / Linux/X11)
 
 ## インストール
 
@@ -119,22 +119,28 @@ JSON として保存されます (`src/core/settings.{h,cpp}`):
 | `firefly_caps_mode` | `preserve` \| `uppercase` \| `lowercase` | `uppercase` |
 | `firefly_led_mode` | `auto` \| `hid` \| `none` | `auto` |
 
-## Firefly (Windows)
+## Firefly (Windows / macOS / Linux/X11)
 
 Firefly は、IME Aura 動作中に物理 **CapsLock** キーを Available / Busy (おやすみモード) トグルに割り当てます。
 
 | 状態 | 意味 | CapsLock LED (LED 制御オン時) | 通知 |
 | --- | --- | --- | --- |
 | **Available** | 有効化直後の既定 | 消灯 | 通常 |
-| **Busy** | CapsLock 押下後 | 点灯 | 抑制 (集中モード / Quiet Hours) |
+| **Busy** | CapsLock 押下後 | 点灯 | 抑制 |
 
 - Firefly を有効にすると、常に **Available** から開始します。
 - CapsLock を押すたびに Available ↔ Busy を切り替えます。
 - Firefly 有効中、CapsLock はシステムの大文字/小文字切替をしません。大文字小文字は `firefly_caps_mode` に従います。
-- Firefly を無効にすると、可能な範囲で以前の CapsLock と Quiet Hours の設定を復元します。
-- フェイルクローズ: 低レベルキーボードフックをインストールできない場合、有効化は拒否され UI トグルはオフのままです。
+- Firefly を無効にすると、可能な範囲で以前の CapsLock と DND 設定を復元します。
+- フェイルクローズ: プラットフォームのインターセプトをインストールできない場合、有効化は拒否されます (`firefly_enabled` をクリア)。
 
-他プラットフォームに Firefly バックエンドはありません (`create_firefly_backend()` は `nullptr` を返します)。
+| プラットフォーム | インターセプト | LED | DND |
+| --- | --- | --- | --- |
+| **Windows** | `WH_KEYBOARD_LL` | CapsLock ビット / HID | レジストリ Quiet Hours |
+| **macOS** | `CGEventTap` (アクセシビリティ許可が必要) | CapsLock 状態 | `defaults` Notification Center UI |
+| **Linux** | X11 `XGrabKey` + XTest | sysfs または XKB インジケータ | GNOME `gsettings` (書き込み可能時) |
+
+詳細は [docs/firefly.md](docs/firefly.md) を参照。macOS / Linux では設定 UI 完成前は `settings.json` で Firefly を設定します。
 
 ### CapsLock 状態 (`firefly_caps_mode`)
 
@@ -150,8 +156,8 @@ Firefly は、IME Aura 動作中に物理 **CapsLock** キーを Available / Bus
 
 | 値 | 効果 |
 | --- | --- |
-| `auto` | Busy ランプとしてネイティブ CapsLock LED を優先; フォールバックは HID |
-| `hid` | HID 出力レポートのみで LED を駆動 |
+| `auto` | Busy ランプとしてネイティブ CapsLock LED を優先; Linux では sysfs `*capslock` も試行 |
+| `hid` | HID/sysfs のみで LED を駆動 (Windows HID レポート; Linux sysfs) |
 | `none` | Busy / Available 用に CapsLock LED を駆動しない |
 
 Windows では CapsLock LED と文字の大文字小文字は同一のトグルビットを共有します。Firefly の既定パスはそのビットを Busy ランプに使い、ラテン A–Z を書き換えて `firefly_caps_mode` XOR Shift に従う大文字小文字にします。

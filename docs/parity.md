@@ -28,7 +28,7 @@ Native implementation: C++20 in `src/`.
 - [x] Color picker supports alpha channel (RGBA sliders)
 - [x] Gradient thickness clamped to half of monitor min dimension
 - [x] Text-input hover/focus updates within ~100 ms (worker callback + 100 ms poll)
-- [x] Firefly (Windows): CapsLock Available/Busy toggle, LED, Quiet Hours, caps mode
+- [x] Firefly: CapsLock Available/Busy toggle, LED, DND (Windows / macOS / Linux X11)
 
 ## Windows settings UI polish
 
