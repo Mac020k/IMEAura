@@ -13,6 +13,7 @@ namespace imeaura {
 
 inline constexpr const char* kDisplayModeAlways = "always";
 inline constexpr const char* kDisplayModeOnFocus = "on_focus";
+// Legacy JSON value; migrated to aura_enabled=false on load.
 inline constexpr const char* kDisplayModeHidden = "hidden";
 
 inline constexpr const char* kFontSizeSmall = "small";
@@ -32,6 +33,7 @@ struct AuraColorSlot {
 
 struct Settings {
   std::vector<AuraColorSlot> aura_slots;
+  bool aura_enabled = true;
   std::string display_mode = kDisplayModeAlways;
   bool show_on_hover = false;
   std::string ui_font_size = kFontSizeMedium;

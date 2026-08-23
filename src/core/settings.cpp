@@ -50,7 +50,7 @@ json::Value color_to_json(const Rgba& c) {
 }
 
 std::string normalize_display_mode(const std::string& v) {
-  if (v == kDisplayModeAlways || v == kDisplayModeOnFocus || v == kDisplayModeHidden) return v;
+  if (v == kDisplayModeAlways || v == kDisplayModeOnFocus) return v;
   return kDisplayModeAlways;
 }
 
@@ -157,6 +157,11 @@ std::string normalize_caps_mode(const std::string& v) {
 Settings normalize_settings(const Settings& raw) {
   Settings s = raw;
   s.aura_slots = normalize_aura_slots(std::move(s.aura_slots));
+  // Migrate legacy display_mode=hidden → aura_enabled=false.
+  if (s.display_mode == kDisplayModeHidden) {
+    s.aura_enabled = false;
+    s.display_mode = kDisplayModeAlways;
+  }
   s.display_mode = normalize_display_mode(s.display_mode);
   s.ui_font_size = normalize_font_size(s.ui_font_size);
   s.gradient_width = clamp_width(s.gradient_width);
@@ -216,6 +221,9 @@ bool load_settings(Settings& out) {
     if (const auto* v = root.find("color_en")) en = color_from_json(v, en);
     s.aura_slots = {{kInputJa, jp}, {kInputEn, en}};
   }
+  if (const auto* v = root.find("aura_enabled")) {
+    if (v->type == json::Value::Type::Bool) s.aura_enabled = v->bool_value;
+  }
   if (const auto* v = root.find("display_mode")) {
     if (v->type == json::Value::Type::String) s.display_mode = v->string_value;
   }
@@ -267,6 +275,7 @@ bool save_settings(const Settings& settings) {
       {"aura_colors", json::Value::make_array(std::move(aura_arr))},
       {"color_jp", color_to_json(jp)},
       {"color_en", color_to_json(en)},
+      {"aura_enabled", json::Value::make_bool(s.aura_enabled)},
       {"display_mode", json::Value::make_string(s.display_mode)},
       {"show_on_hover", json::Value::make_bool(s.show_on_hover)},
       {"ui_font_size", json::Value::make_string(s.ui_font_size)},

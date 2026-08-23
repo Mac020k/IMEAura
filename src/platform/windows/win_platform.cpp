@@ -27,6 +27,8 @@ constexpr UINT kRefreshMessage = WM_APP + 2;
 constexpr UINT kFireflyToggleMsg = WM_APP + 100;
 constexpr int kCmdOpenSettings = 1001;
 constexpr int kCmdQuit = 1002;
+constexpr int kCmdToggleAura = 1003;
+constexpr int kCmdToggleFirefly = 1004;
 
 WinPlatformBackend* g_self = nullptr;
 WinCompEdges g_edges;
@@ -195,28 +197,7 @@ bool WinPlatformBackend::init() {
     return false;
   }
 
-  if (!win_settings::create(g_instance, settings_, [this](const Settings& s) {
-        const bool was_ff = settings_.firefly_enabled;
-        const std::string prev_caps = settings_.firefly_caps_mode;
-        const std::string prev_led = settings_.firefly_led_mode;
-        settings_ = s;
-        save_settings(settings_);
-        notify_settings_changed(settings_);
-        sync_text_watchers();
-        if (s.firefly_enabled && !was_ff) {
-          if (!StartFirefly(settings_)) {
-            settings_.firefly_enabled = false;
-            save_settings(settings_);
-            win_settings::sync(settings_);
-          }
-        } else if (!s.firefly_enabled && was_ff) {
-          StopFirefly();
-        } else if (s.firefly_enabled && g_firefly) {
-          if (s.firefly_caps_mode != prev_caps) g_firefly->set_caps_mode(s.firefly_caps_mode);
-          if (s.firefly_led_mode != prev_led) g_firefly->set_led_mode(s.firefly_led_mode);
-        }
-        update_state(true);
-      })) {
+  if (!win_settings::create(g_instance, settings_, [this](const Settings& s) { apply_settings(s); })) {
     return false;
   }
 
@@ -330,6 +311,30 @@ ProbeState WinPlatformBackend::probe_state(const Settings& settings) {
 
 void WinPlatformBackend::request_refresh() { update_state(); }
 
+void WinPlatformBackend::apply_settings(const Settings& s) {
+  const bool was_ff = settings_.firefly_enabled;
+  const std::string prev_caps = settings_.firefly_caps_mode;
+  const std::string prev_led = settings_.firefly_led_mode;
+  settings_ = s;
+  save_settings(settings_);
+  notify_settings_changed(settings_);
+  sync_text_watchers();
+  if (s.firefly_enabled && !was_ff) {
+    if (!StartFirefly(settings_)) {
+      settings_.firefly_enabled = false;
+      save_settings(settings_);
+      win_settings::sync(settings_);
+    }
+  } else if (!s.firefly_enabled && was_ff) {
+    StopFirefly();
+  } else if (s.firefly_enabled && g_firefly) {
+    if (s.firefly_caps_mode != prev_caps) g_firefly->set_caps_mode(s.firefly_caps_mode);
+    if (s.firefly_led_mode != prev_led) g_firefly->set_led_mode(s.firefly_led_mode);
+  }
+  win_settings::sync(settings_);
+  update_state(true);
+}
+
 void WinPlatformBackend::update_state(bool force) {
   PolicyInput in{};
   in.ime_lang = active_input_language();
@@ -407,6 +412,11 @@ LRESULT CALLBACK WinPlatformBackend::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPA
       if (lp == WM_RBUTTONUP || lp == WM_CONTEXTMENU) {
         HMENU menu = CreatePopupMenu();
         const auto l = lang_from_key(self->settings_.language);
+        AppendMenuW(menu, MF_STRING | (self->settings_.aura_enabled ? MF_CHECKED : MF_UNCHECKED), kCmdToggleAura,
+                    tr(l, StringId::kAuraEnable));
+        AppendMenuW(menu, MF_STRING | (self->settings_.firefly_enabled ? MF_CHECKED : MF_UNCHECKED),
+                    kCmdToggleFirefly, tr(l, StringId::kFireflyEnable));
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kCmdOpenSettings, tr(l, StringId::kTrayOpen));
         AppendMenuW(menu, MF_STRING, kCmdQuit, tr(l, StringId::kTrayQuit));
         POINT pt{};
@@ -437,6 +447,16 @@ LRESULT CALLBACK WinPlatformBackend::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPA
     case WM_COMMAND:
       if (LOWORD(wp) == kCmdOpenSettings) self->show_settings_window();
       if (LOWORD(wp) == kCmdQuit) PostMessageW(g_app_hwnd, WM_CLOSE, 0, 0);
+      if (LOWORD(wp) == kCmdToggleAura) {
+        Settings next = self->settings_;
+        next.aura_enabled = !next.aura_enabled;
+        self->apply_settings(next);
+      }
+      if (LOWORD(wp) == kCmdToggleFirefly) {
+        Settings next = self->settings_;
+        next.firefly_enabled = !next.firefly_enabled;
+        self->apply_settings(next);
+      }
       return 0;
     case WM_DISPLAYCHANGE:
     case WM_DPICHANGED:

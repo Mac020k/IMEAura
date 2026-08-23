@@ -56,7 +56,7 @@ enum class Hit : int {
   ResetWidth,
   ModeAlways,
   ModeFocus,
-  ModeHidden,
+  AuraToggle,
   Hover,
   FontSmall,
   FontMedium,
@@ -86,9 +86,15 @@ struct UiMetrics {
   int sub_h = 16;
   int row_h = 32;
   int value_w = 64;
-  int font_bar_h = 32;
+  int font_bar_h = 52;
+  int font_r_s = 14;
+  int font_r_m = 18;
+  int font_r_l = 22;
   int swatch_w = 104;
   int swatch_h = 32;
+  int lang_drop_w = 140;
+  int back_btn_w = 72;
+  int add_slot_w = 120;
 };
 
 D2D1_COLOR_F C(const Rgba& c, float a_scale = 1.f) {
@@ -328,7 +334,8 @@ class SettingsUi {
     RECT rc{};
     GetClientRect(hwnd_, &rc);
     const int w = MulDiv(rc.right, 96, dpi_);
-    return std::max(0, w - dip(kUiMargin) * 2 - dip(kUiScrollBarGutter));
+    // Equal left/right page margins; scrollbar overlays the right margin.
+    return std::max(0, w - dip(kUiMargin) * 2);
   }
 
   void ensure_factories() {
@@ -371,21 +378,28 @@ class SettingsUi {
     return fmt;
   }
 
-  DWRITE_TEXT_METRICS measure_text(IDWriteTextFormat* fmt, const wchar_t* text) const {
+  DWRITE_TEXT_METRICS measure_text(IDWriteTextFormat* fmt, const wchar_t* text, float max_w = 16384.f,
+                                   bool wrap = false) const {
     DWRITE_TEXT_METRICS metrics{};
     if (!dwrite_ || !fmt || !text) return metrics;
     ComPtr<IDWriteTextLayout> layout;
     const UINT32 n = static_cast<UINT32>(wcslen(text));
-    if (FAILED(dwrite_->CreateTextLayout(text, n, fmt, 16384.f, 16384.f, layout.GetAddressOf())) || !layout) {
+    if (FAILED(dwrite_->CreateTextLayout(text, n, fmt, std::max(1.f, max_w), 16384.f, layout.GetAddressOf())) ||
+        !layout) {
       return metrics;
     }
-    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    layout->SetWordWrapping(wrap ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
     layout->GetMetrics(&metrics);
     return metrics;
   }
 
   int text_height(IDWriteTextFormat* fmt) const {
-    return std::max(1, static_cast<int>(std::ceil(measure_text(fmt, L"Agあ").height)));
+    // Include a little slack so glyph ascent/descent is not clipped by the draw box.
+    return std::max(1, static_cast<int>(std::ceil(measure_text(fmt, L"Agあ漢字Å").height)) + 2);
+  }
+
+  int text_height_wrapped(IDWriteTextFormat* fmt, const wchar_t* text, int max_w) const {
+    return std::max(1, static_cast<int>(std::ceil(measure_text(fmt, text, static_cast<float>(max_w), true).height)));
   }
 
   int text_width(IDWriteTextFormat* fmt, const wchar_t* text) const {
@@ -401,40 +415,48 @@ class SettingsUi {
     u.sub_h = text_height(sub_fmt);
     u.row_h = std::max(dip(kUiHitMin), u.body_h + pad_y * 2);
     u.value_w = text_width(body_fmt, L"100 px") + pad_x * 2 + dip(kUiRowGap);
-    int seg_line = u.body_h;
-    const char* keys[] = {kFontSizeSmall, kFontSizeMedium, kFontSizeLarge};
-    for (const char* key : keys) {
-      auto preview = make_format(ui_font_point_size(key), DWRITE_FONT_WEIGHT_NORMAL);
-      seg_line = std::max(seg_line, text_height(preview.Get()));
-    }
-    u.font_bar_h = std::max(dip(kUiHitMin), seg_line + pad_y * 2) + dip(kUiSpace1) * 2;
+    // Tapered font-size control: keep small; enlarge medium/large steps.
+    u.font_r_s = std::max(dip(12), u.body_h / 2 + dip(2));
+    u.font_r_m = u.font_r_s + dip(8);
+    u.font_r_l = u.font_r_s + dip(16);
+    const int font_pad = dip(6);
+    u.font_bar_h = 2 * (u.font_r_l + font_pad);
     u.swatch_h = std::max(dip(kUiHitMin), u.body_h + pad_y * 2);
     u.swatch_w =
         std::max(1, static_cast<int>(std::lround(u.swatch_h * static_cast<double>(kUiSwatchW) / kUiSwatchH)));
+    int name_w = 1;
+    for (const auto& slot : settings_.aura_slots) {
+      const wchar_t* name = input_language_display_name(slot.lang_id, lang() != Lang::En);
+      if (name) name_w = std::max(name_w, text_width(body_fmt, name));
+    }
+    u.lang_drop_w = name_w + pad_x * 2 + dip(28);
+    u.back_btn_w = dip(8) + dip(16) + dip(4) + text_width(body_fmt, tr(lang(), StringId::kLangBack)) + dip(8);
+    u.add_slot_w =
+        dip(8) + dip(16) + dip(4) + text_width(body_fmt, tr(lang(), StringId::kAddColorSlot)) + dip(8);
     return u;
   }
 
   void draw_text(ID2D1RenderTarget* rt, IDWriteTextFormat* fmt, const wchar_t* text, const D2D1_RECT_F& box,
-                 const D2D1_COLOR_F& color, AlignH align_h = AlignH::Left, AlignV align_v = AlignV::Top) {
+                 const D2D1_COLOR_F& color, AlignH align_h = AlignH::Left, AlignV align_v = AlignV::Top,
+                 bool wrap = true) {
     if (!rt || !fmt || !text || !dwrite_) return;
     const float w = std::max(0.f, box.right - box.left);
     const float h = std::max(0.f, box.bottom - box.top);
     if (w <= 0.f || h <= 0.f) return;
     ComPtr<IDWriteTextLayout> layout;
     const UINT32 n = static_cast<UINT32>(wcslen(text));
-    if (FAILED(dwrite_->CreateTextLayout(text, n, fmt, w, 16384.f, layout.GetAddressOf())) || !layout) return;
-    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-    DWRITE_TEXT_METRICS metrics{};
-    layout->GetMetrics(&metrics);
-    float x = box.left - metrics.left;
-    float y = box.top - metrics.top;
-    if (align_h == AlignH::Center) x += (w - metrics.width) * 0.5f;
-    if (align_v == AlignV::Center) y += (h - metrics.height) * 0.5f;
+    // Always use the destination box height so paragraph alignment stays inside the clip.
+    if (FAILED(dwrite_->CreateTextLayout(text, n, fmt, w, h, layout.GetAddressOf())) || !layout) return;
+    layout->SetWordWrapping(wrap ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
+    if (align_h == AlignH::Center) layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    else layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    if (align_v == AlignV::Center) layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    else layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     ComPtr<ID2D1SolidColorBrush> brush;
     rt->CreateSolidColorBrush(color, brush.GetAddressOf());
     if (!brush) return;
     rt->PushAxisAlignedClip(box, D2D1_ANTIALIAS_MODE_ALIASED);
-    rt->DrawTextLayout(D2D1::Point2F(x, y), layout.Get(), brush.Get());
+    rt->DrawTextLayout(D2D1::Point2F(box.left, box.top), layout.Get(), brush.Get());
     rt->PopAxisAlignedClip();
   }
 
@@ -454,10 +476,12 @@ class SettingsUi {
   }
 
   void clamp_scroll() {
-    client_height_ = client_dip_h() - dip(kUiTabBarHeight);
+    client_height_ = client_dip_h() - tab_bar_h();
     scroll_max_ = std::max(0, content_height_ - client_height_);
     scroll_y_ = std::clamp(scroll_y_, 0, scroll_max_);
   }
+
+  int tab_bar_h() const { return page_ == Page::LangPicker ? 0 : dip(kUiTabBarHeight); }
 
   void scroll_by(int delta) {
     if (scroll_max_ <= 0) return;
@@ -578,9 +602,9 @@ class SettingsUi {
     auto body_fmt = make_format(body, DWRITE_FONT_WEIGHT_NORMAL);
     auto sub_fmt = make_format(std::max(body - 2, 10), DWRITE_FONT_WEIGHT_NORMAL);
     const UiMetrics um = make_metrics(title_fmt.Get(), body_fmt.Get(), sub_fmt.Get());
-    layout(um);
+    layout(um, body_fmt.Get(), sub_fmt.Get());
     clamp_scroll();
-    layout(um);
+    layout(um, body_fmt.Get(), sub_fmt.Get());
     clamp_scroll();
 
     rt_->BeginDraw();
@@ -601,9 +625,9 @@ class SettingsUi {
       if (wash) rt_->FillRectangle(D2D1::RectF(0, 0, w, h), wash.Get());
     }
 
-    // Tab bar
-    const int tab_h = dip(kUiTabBarHeight);
-    {
+    // Tab bar (hidden on language picker)
+    const int tab_h = tab_bar_h();
+    if (tab_h > 0) {
       const float tab_y = static_cast<float>(tab_h);
       ComPtr<ID2D1SolidColorBrush> sep;
       rt_->CreateSolidColorBrush(C(kUiSeparator), sep.GetAddressOf());
@@ -646,16 +670,17 @@ class SettingsUi {
           rt_->FillRectangle(D2D1::RectF(il, ind_y, ir, tab_y), ind.Get());
         }
       }
+    } else {
+      tab_aura_ = tab_firefly_ = tab_general_ = RECT{};
     }
 
     rt_->PushAxisAlignedClip(D2D1::RectF(0, static_cast<float>(tab_h), w, h), D2D1_ANTIALIAS_MODE_ALIASED);
     rt_->SetTransform(D2D1::Matrix3x2F::Translation(0, static_cast<float>(tab_h) - static_cast<float>(scroll_y_)));
 
     if (page_ == Page::LangPicker) {
-      draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kLangSection), r2f(lang_picker_title_), C(kUiText));
-      fill_round(rt_.Get(), r2f(lang_back_), dip(10), hover_ == Hit::LangBack ? C(kUiFillHover) : C(kUiFill));
-      draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kLangBack), r2f(lang_back_), C(kUiText), AlignH::Center,
-                AlignV::Center);
+      paint_back_button(lang_back_, body_fmt.Get(), hover_ == Hit::LangBack);
+      draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kLangSection), r2f(lang_picker_title_), C(kUiText),
+                AlignH::Left, AlignV::Center);
       size_t n = 0;
       const auto* cat = input_language_catalog(n);
       for (size_t i = 0; i < n && i < lang_pick_rows_.size(); ++i) {
@@ -663,38 +688,43 @@ class SettingsUi {
         paint_radio(lang_pick_rows_[i], on, tr(lang(), string_id_for_ui_lang(cat[i].id)), body_fmt.Get());
       }
     } else if (active_tab_ == Tab::Aura) {
+    const float settings_alpha = settings_.aura_enabled ? 1.f : 0.45f;
 
-    draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kColorSection), r2f(sec_color_title_), C(kUiText));
+    draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kAuraTitle), r2f(aura_title_), C(kUiText));
+    draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kAuraSub), r2f(aura_sub_), C(kUiTextSecondary));
+    paint_toggle_row(aura_toggle_, settings_.aura_enabled, tr(lang(), StringId::kAuraEnable), body_fmt.Get());
+
+    draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kColorSection), r2f(sec_color_title_),
+              C(kUiText, settings_alpha));
     draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kColorSub), r2f(sec_color_sub_),
-              C(kUiTextSecondary));
+              C(kUiTextSecondary, settings_alpha));
     for (size_t i = 0; i < settings_.aura_slots.size() && i < slot_lang_.size(); ++i) {
       const auto& slot = settings_.aura_slots[i];
       const wchar_t* name = input_language_display_name(slot.lang_id, lang() != Lang::En);
-      draw_text(rt_.Get(), body_fmt.Get(), name, r2f(slot_lang_[i]), C(kUiText), AlignH::Left, AlignV::Center);
+      paint_lang_dropdown(slot_lang_[i], name, body_fmt.Get(),
+                          hover_ == static_cast<Hit>(static_cast<int>(Hit::SlotLang0) + static_cast<int>(i)));
       paint_swatch(slot_swatch_[i], slot.color,
                    hover_ == static_cast<Hit>(static_cast<int>(Hit::SlotSwatch0) + static_cast<int>(i)));
       if (settings_.aura_slots.size() > static_cast<size_t>(kMinAuraSlots)) {
-        draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kRemoveColorSlot), r2f(slot_remove_[i]),
-                  hover_ == static_cast<Hit>(static_cast<int>(Hit::SlotRemove0) + static_cast<int>(i))
-                      ? C(kUiDanger)
-                      : C(kUiTextSecondary),
-                  AlignH::Left, AlignV::Center);
+        paint_remove_button(slot_remove_[i],
+                            hover_ == static_cast<Hit>(static_cast<int>(Hit::SlotRemove0) + static_cast<int>(i)));
       }
     }
     if (static_cast<int>(settings_.aura_slots.size()) < kMaxAuraSlots) {
-      fill_round(rt_.Get(), r2f(add_slot_), dip(10),
-                 hover_ == Hit::AddSlot ? C(kUiFillHover) : C(kUiFill));
-      draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kAddColorSlot), r2f(add_slot_), C(kUiText),
-                AlignH::Center, AlignV::Center);
+      paint_add_slot_button(add_slot_, body_fmt.Get(), hover_ == Hit::AddSlot);
     }
     draw_text(rt_.Get(), body_fmt.Get(),
               reset_colors_flash_ ? tr(lang(), StringId::kColorResetDone) : tr(lang(), StringId::kColorReset),
-              r2f(reset_colors_), hover_ == Hit::ResetColors ? C(kDefaultColorEn) : C(kUiTextSecondary), AlignH::Left,
-              AlignV::Center);
+              r2f(reset_colors_),
+              hover_ == Hit::ResetColors ? C(kDefaultColorEn, settings_alpha)
+                                         : C(kUiTextSecondary, settings_alpha),
+              AlignH::Left, AlignV::Center);
     paint_rule(rule1_);
 
-    draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kWidthSection), r2f(sec_width_title_), C(kUiText));
-    draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kWidthSub), r2f(sec_width_sub_), C(kUiTextSecondary));
+    draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kWidthSection), r2f(sec_width_title_),
+              C(kUiText, settings_alpha));
+    draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kWidthSub), r2f(sec_width_sub_),
+              C(kUiTextSecondary, settings_alpha));
     paint_slider();
     wchar_t pxbuf[32];
     if (width_editing_) {
@@ -703,74 +733,31 @@ class SettingsUi {
       swprintf_s(pxbuf, L"%d px", settings_.gradient_width);
     }
     fill_round(rt_.Get(), r2f(width_value_), dip(8), width_editing_ ? C(kUiFillHover) : C(kUiFill));
-    draw_text(rt_.Get(), body_fmt.Get(), pxbuf, r2f(width_value_), C(kUiText), AlignH::Center, AlignV::Center);
+    draw_text(rt_.Get(), body_fmt.Get(), pxbuf, r2f(width_value_), C(kUiText, settings_alpha), AlignH::Center,
+              AlignV::Center);
     draw_text(rt_.Get(), body_fmt.Get(),
               reset_width_flash_ ? tr(lang(), StringId::kWidthResetDone) : tr(lang(), StringId::kWidthReset),
-              r2f(reset_width_), hover_ == Hit::ResetWidth ? C(kDefaultColorEn) : C(kUiTextSecondary), AlignH::Left, AlignV::Center);
+              r2f(reset_width_),
+              hover_ == Hit::ResetWidth ? C(kDefaultColorEn, settings_alpha) : C(kUiTextSecondary, settings_alpha),
+              AlignH::Left, AlignV::Center);
     paint_rule(rule2_);
 
-    draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kDisplaySection), r2f(sec_disp_title_), C(kUiText));
-    paint_radio(mode_always_, settings_.display_mode == kDisplayModeAlways, tr(lang(), StringId::kDisplayAlways), body_fmt.Get());
-    paint_radio(mode_focus_, settings_.display_mode == kDisplayModeOnFocus, tr(lang(), StringId::kDisplayFocus), body_fmt.Get());
+    draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kDisplaySection), r2f(sec_disp_title_),
+              C(kUiText, settings_alpha));
+    paint_radio(mode_always_, settings_.display_mode == kDisplayModeAlways, tr(lang(), StringId::kDisplayAlways),
+                body_fmt.Get(), settings_alpha);
+    paint_radio(mode_focus_, settings_.display_mode == kDisplayModeOnFocus, tr(lang(), StringId::kDisplayFocus),
+                body_fmt.Get(), settings_alpha);
     if (settings_.display_mode == kDisplayModeOnFocus && hover_box_.bottom > hover_box_.top) {
       paint_check(hover_box_, settings_.show_on_hover, tr(lang(), StringId::kDisplayHover), body_fmt.Get());
     }
-    paint_radio(mode_hidden_, settings_.display_mode == kDisplayModeHidden, tr(lang(), StringId::kDisplayHidden), body_fmt.Get());
 
     } else if (active_tab_ == Tab::Firefly) {
-      const int m = dip(kUiMargin);
-      const int inner = content_width();
-      const int row = um.row_h;
-      int fy = m;
-      RECT ff_title = box(m, fy, inner, um.title_h);
-      fy += um.title_h + dip(kUiRowGap);
-      ff_toggle_ = box(m, fy, inner, row);
-      fy += row + dip(kUiSectionGap);
       const float caps_alpha = settings_.firefly_enabled ? 1.f : 0.45f;
-      ff_caps_title_ = box(m, fy, inner, um.sub_h);
-      fy += um.sub_h + dip(kUiRowGap);
-      ff_caps_preserve_ = box(m, fy, inner, row);
-      fy += row + dip(kUiSpace1);
-      ff_caps_upper_ = box(m, fy, inner, row);
-      fy += row + dip(kUiSpace1);
-      ff_caps_lower_ = box(m, fy, inner, row);
-      fy += row + dip(kUiSectionGap);
-      ff_status_ = box(m, fy, inner, row);
-      fy += row + dip(kUiRowGap);
-      ff_caps_ok_ = box(m, fy, inner, um.sub_h);
-      fy += um.sub_h + dip(kUiSpace1);
-      ff_led_ok_ = box(m, fy, inner, um.sub_h);
-      fy += um.sub_h + dip(kUiSpace1);
-      ff_dnd_ok_ = box(m, fy, inner, um.sub_h);
-      fy += um.sub_h + dip(kUiSectionGap);
-      tab_content_h_[1] = fy;
 
-      draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kFireflyTitle), r2f(ff_title), C(kUiText));
-
-      // Toggle track + knob
-      {
-        const int tw = dip(kUiToggleW);
-        const int th = dip(kUiToggleH);
-        const int knob = dip(kUiToggleKnob);
-        const int ty = ff_toggle_.top + (row - th) / 2;
-        const float track = static_cast<float>(ff_toggle_.left + dip(4));
-        const D2D1_RECT_F trc = D2D1::RectF(track, static_cast<float>(ty), track + tw, static_cast<float>(ty + th));
-        const float v = settings_.firefly_enabled ? 1.f : 0.f;
-        fill_round(rt_.Get(), trc, static_cast<float>(th) * 0.5f,
-                   v > 0.5f ? C(kDefaultColorEn) : C(kUiFill));
-        const float kx = trc.left + 3.f + (tw - knob - 6) * v;
-        const float ky = trc.top + (th - knob) * 0.5f;
-        ComPtr<ID2D1SolidColorBrush> knob_br;
-        rt_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), knob_br.GetAddressOf());
-        if (knob_br) {
-          rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(kx + knob * 0.5f, ky + knob * 0.5f), knob * 0.5f, knob * 0.5f),
-                           knob_br.Get());
-        }
-        D2D1_RECT_F label = r2f(ff_toggle_);
-        label.left = trc.right + static_cast<float>(dip(kUiRowGap));
-        draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kFireflyEnable), label, C(kUiText), AlignH::Left,
-                  AlignV::Center);
-      }
+      draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kFireflyTitle), r2f(ff_title_), C(kUiText));
+      draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflySub), r2f(ff_sub_), C(kUiTextSecondary));
+      paint_toggle_row(ff_toggle_, settings_.firefly_enabled, tr(lang(), StringId::kFireflyEnable), body_fmt.Get());
 
       draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflyCapsSection), r2f(ff_caps_title_),
                 C(kUiTextSecondary, caps_alpha));
@@ -782,22 +769,16 @@ class SettingsUi {
                   tr(lang(), StringId::kFireflyCapsLowercase), body_fmt.Get(), caps_alpha);
 
       if (settings_.firefly_enabled) {
-        draw_text(rt_.Get(), body_fmt.Get(),
-                  firefly_active_ ? tr(lang(), StringId::kFireflyStateBusy)
-                                  : tr(lang(), StringId::kFireflyStateAvailable),
-                  r2f(ff_status_), C(kUiTextSecondary), AlignH::Left, AlignV::Center);
-        if (firefly_caps_ok_) {
-          draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflyCapsOk), r2f(ff_caps_ok_),
-                    C(kUiTextSecondary), AlignH::Left, AlignV::Center);
-        }
-        if (firefly_led_ok_) {
-          draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflyLedOk), r2f(ff_led_ok_),
-                    C(kUiTextSecondary), AlignH::Left, AlignV::Center);
-        }
-        if (firefly_dnd_ok_) {
-          draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflyDndOk), r2f(ff_dnd_ok_),
-                    C(kUiTextSecondary), AlignH::Left, AlignV::Center);
-        }
+        const D2D1_COLOR_F lamp_on = D2D1::ColorF(0x16 / 255.f, 0xCC / 255.f, 0x7B / 255.f, 1.f);
+        const D2D1_COLOR_F lamp_busy = D2D1::ColorF(0xE6 / 255.f, 0x69 / 255.f, 0x0C / 255.f, 1.f);
+        paint_status_lamp(ff_status_, true, firefly_active_ ? lamp_busy : lamp_on,
+                          firefly_active_ ? tr(lang(), StringId::kFireflyStateBusy)
+                                          : tr(lang(), StringId::kFireflyStateAvailable),
+                          body_fmt.Get());
+        paint_status_lamp(ff_caps_ok_, firefly_caps_ok_, lamp_on, tr(lang(), StringId::kFireflyCapsOk),
+                          sub_fmt.Get());
+        paint_status_lamp(ff_led_ok_, firefly_led_ok_, lamp_on, tr(lang(), StringId::kFireflyLedOk), sub_fmt.Get());
+        paint_status_lamp(ff_dnd_ok_, firefly_dnd_ok_, lamp_on, tr(lang(), StringId::kFireflyDndOk), sub_fmt.Get());
         if (!firefly_caps_ok_ || !firefly_led_ok_ || !firefly_dnd_ok_) {
           RECT uns = ff_dnd_ok_;
           uns.top = ff_dnd_ok_.bottom + dip(kUiRowGap);
@@ -818,12 +799,13 @@ class SettingsUi {
     // Language section
     {
       const int m = dip(kUiMargin);
+      const int ind = dip(kUiIndent);
       const int inner = content_width();
       const int row = um.row_h;
       int gy = rule3_.top + dip(kUiSectionGap);
       RECT lang_title = box(m, gy, inner, um.title_h);
       gy += um.title_h + dip(kUiRowGap);
-      lang_change_ = box(m, gy, inner, row);
+      lang_change_ = box(m + ind, gy, std::max(1, inner - ind), row);
       gy += row + dip(kUiSectionGap);
       lang_rule_ = box(m, gy, inner, 1);
       gy += dip(kUiSectionGap);
@@ -834,19 +816,21 @@ class SettingsUi {
       wchar_t lang_btn[128];
       swprintf_s(lang_btn, L"%s: %s", tr(lang(), StringId::kLangChange),
                  tr(lang(), string_id_for_ui_lang(settings_.language)));
-      draw_text(rt_.Get(), body_fmt.Get(), lang_btn, r2f(lang_change_), C(kUiText), AlignH::Center, AlignV::Center);
+      draw_text(rt_.Get(), body_fmt.Get(), lang_btn, r2f(lang_change_), C(kUiText), AlignH::Center, AlignV::Center,
+                false);
       paint_rule(lang_rule_);
     }
 
     paint_rule(rule4_);
 
     fill_round(rt_.Get(), r2f(about_), dip(12), hover_ == Hit::About ? C(kUiFillHover) : C(kUiFill));
-    draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kAbout), r2f(about_), C(kUiText), AlignH::Center, AlignV::Center);
+    draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kAbout), r2f(about_), C(kUiText), AlignH::Center,
+              AlignV::Center, false);
     fill_round(rt_.Get(), r2f(quit_), dip(12),
                hover_ == Hit::Quit ? D2D1::ColorF(200 / 255.f, 50 / 255.f, 50 / 255.f, 38 / 255.f)
                                    : C(kUiDangerFill));
     draw_text(rt_.Get(), body_fmt.Get(), tr(lang(), StringId::kQuit), r2f(quit_), C(kUiDanger), AlignH::Center,
-              AlignV::Center);
+              AlignV::Center, false);
     } // end of General tab
 
     rt_->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -876,6 +860,189 @@ class SettingsUi {
     const HRESULT hr = rt_->EndDraw();
     if (hr == D2DERR_RECREATE_TARGET) release_target();
     EndPaint(hwnd_, &ps);
+  }
+
+  // Icons match img/icon_back.svg, img/icon_trash.svg, img/icon_add.svg (24x24 viewBox).
+  void draw_icon_back(float cx, float cy, float size, const D2D1_COLOR_F& color) {
+    ComPtr<ID2D1SolidColorBrush> brush;
+    rt_->CreateSolidColorBrush(color, brush.GetAddressOf());
+    if (!brush) return;
+    ComPtr<ID2D1PathGeometry> geo;
+    ID2D1Factory* fac = nullptr;
+    rt_->GetFactory(&fac);
+    if (!fac || FAILED(fac->CreatePathGeometry(geo.GetAddressOf())) || !geo) return;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(geo->Open(sink.GetAddressOf())) || !sink) return;
+    const float s = size / 24.f;
+    auto P = [&](float x, float y) { return D2D1::Point2F(cx + (x - 12.f) * s, cy + (y - 12.f) * s); };
+    sink->BeginFigure(P(15.f, 5.f), D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddLine(P(8.f, 12.f));
+    sink->AddLine(P(15.f, 19.f));
+    sink->AddLine(P(13.2f, 19.f));
+    sink->AddLine(P(6.2f, 12.f));
+    sink->AddLine(P(13.2f, 5.f));
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    sink->Close();
+    rt_->FillGeometry(geo.Get(), brush.Get());
+  }
+
+  void draw_icon_trash(float cx, float cy, float size, const D2D1_COLOR_F& color) {
+    ComPtr<ID2D1SolidColorBrush> brush;
+    rt_->CreateSolidColorBrush(color, brush.GetAddressOf());
+    if (!brush) return;
+    const float s = size / 24.f;
+    auto P = [&](float x, float y) { return D2D1::Point2F(cx + (x - 12.f) * s, cy + (y - 12.f) * s); };
+    const float stroke = std::max(1.25f, size * 0.075f);
+
+    // Lid
+    rt_->DrawLine(P(4.5f, 7.f), P(19.5f, 7.f), brush.Get(), stroke);
+    // Handle
+    rt_->DrawLine(P(9.f, 7.f), P(9.f, 5.f), brush.Get(), stroke);
+    rt_->DrawLine(P(9.f, 5.f), P(15.f, 5.f), brush.Get(), stroke);
+    rt_->DrawLine(P(15.f, 5.f), P(15.f, 7.f), brush.Get(), stroke);
+    // Can body
+    ComPtr<ID2D1PathGeometry> body;
+    ID2D1Factory* fac = nullptr;
+    rt_->GetFactory(&fac);
+    if (fac && SUCCEEDED(fac->CreatePathGeometry(body.GetAddressOf())) && body) {
+      ComPtr<ID2D1GeometrySink> sink;
+      if (SUCCEEDED(body->Open(sink.GetAddressOf())) && sink) {
+        sink->BeginFigure(P(7.f, 7.f), D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(P(8.2f, 19.5f));
+        sink->AddBezier(D2D1::BezierSegment(P(8.35f, 20.6f), P(9.2f, 21.f), P(10.f, 21.f)));
+        sink->AddLine(P(14.f, 21.f));
+        sink->AddBezier(D2D1::BezierSegment(P(14.8f, 21.f), P(15.65f, 20.6f), P(15.8f, 19.5f)));
+        sink->AddLine(P(17.f, 7.f));
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+        sink->Close();
+        rt_->DrawGeometry(body.Get(), brush.Get(), stroke);
+      }
+    }
+    // Inner slots
+    rt_->DrawLine(P(10.f, 10.5f), P(10.f, 17.5f), brush.Get(), stroke);
+    rt_->DrawLine(P(12.f, 10.5f), P(12.f, 17.5f), brush.Get(), stroke);
+    rt_->DrawLine(P(14.f, 10.5f), P(14.f, 17.5f), brush.Get(), stroke);
+  }
+
+  void draw_icon_add(float cx, float cy, float size, const D2D1_COLOR_F& color) {
+    ComPtr<ID2D1SolidColorBrush> brush;
+    rt_->CreateSolidColorBrush(color, brush.GetAddressOf());
+    if (!brush) return;
+    const float s = size / 24.f;
+    auto P = [&](float x, float y) { return D2D1::Point2F(cx + (x - 12.f) * s, cy + (y - 12.f) * s); };
+    const float stroke = std::max(1.5f, size * 0.085f);
+    rt_->DrawLine(P(12.f, 5.f), P(12.f, 19.f), brush.Get(), stroke);
+    rt_->DrawLine(P(5.f, 12.f), P(19.f, 12.f), brush.Get(), stroke);
+  }
+
+  void paint_back_button(const RECT& rc, IDWriteTextFormat* fmt, bool hover) {
+    fill_round(rt_.Get(), r2f(rc), dip(10), hover ? C(kUiFillHover) : C(kUiFill));
+    const float cy = (rc.top + rc.bottom) * 0.5f;
+    const float icon = static_cast<float>(dip(16));
+    const float pad = static_cast<float>(dip(8));
+    const float icon_cx = static_cast<float>(rc.left) + pad + icon * 0.5f;
+    draw_icon_back(icon_cx, cy, icon, C(kUiText));
+    D2D1_RECT_F text = r2f(rc);
+    text.left = icon_cx + icon * 0.5f + static_cast<float>(dip(4));
+    text.right -= pad;
+    draw_text(rt_.Get(), fmt, tr(lang(), StringId::kLangBack), text, C(kUiText), AlignH::Left, AlignV::Center);
+  }
+
+  void paint_remove_button(const RECT& rc, bool hover) {
+    const float rad = static_cast<float>(std::min(rc.bottom - rc.top, rc.right - rc.left)) * 0.28f;
+    if (hover) fill_round(rt_.Get(), r2f(rc), rad, C(kUiDangerFill));
+    const float cx = (rc.left + rc.right) * 0.5f;
+    const float cy = (rc.top + rc.bottom) * 0.5f;
+    const float icon = static_cast<float>(std::min(rc.right - rc.left, rc.bottom - rc.top) - dip(8));
+    draw_icon_trash(cx, cy, std::max(14.f, icon), hover ? C(kUiDanger) : C(kUiTextSecondary));
+  }
+
+  void paint_add_slot_button(const RECT& rc, IDWriteTextFormat* fmt, bool hover) {
+    fill_round(rt_.Get(), r2f(rc), dip(10), hover ? C(kUiFillHover) : C(kUiFill));
+    const float cy = (rc.top + rc.bottom) * 0.5f;
+    const float icon = static_cast<float>(dip(16));
+    const float pad = static_cast<float>(dip(8));
+    const float icon_cx = static_cast<float>(rc.left) + pad + icon * 0.5f;
+    draw_icon_add(icon_cx, cy, icon, C(kUiText));
+    D2D1_RECT_F text = r2f(rc);
+    text.left = icon_cx + icon * 0.5f + static_cast<float>(dip(4));
+    text.right -= pad;
+    draw_text(rt_.Get(), fmt, tr(lang(), StringId::kAddColorSlot), text, C(kUiText), AlignH::Left,
+              AlignV::Center);
+  }
+
+  void paint_toggle_row(const RECT& rc, bool on, const wchar_t* label, IDWriteTextFormat* fmt) {
+    const int tw = dip(kUiToggleW);
+    const int th = dip(kUiToggleH);
+    const int knob = dip(kUiToggleKnob);
+    const int row = rc.bottom - rc.top;
+    const int ty = rc.top + (row - th) / 2;
+    const float track = static_cast<float>(rc.right - dip(4) - tw);
+    const D2D1_RECT_F trc =
+        D2D1::RectF(track, static_cast<float>(ty), track + static_cast<float>(tw), static_cast<float>(ty + th));
+    const float v = on ? 1.f : 0.f;
+    fill_round(rt_.Get(), trc, static_cast<float>(th) * 0.5f, v > 0.5f ? C(kDefaultColorEn) : C(kUiFill));
+    const float kx = trc.left + 3.f + (tw - knob - 6) * v;
+    const float ky = trc.top + (th - knob) * 0.5f;
+    ComPtr<ID2D1SolidColorBrush> knob_br;
+    rt_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), knob_br.GetAddressOf());
+    if (knob_br) {
+      rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(kx + knob * 0.5f, ky + knob * 0.5f), knob * 0.5f, knob * 0.5f),
+                       knob_br.Get());
+    }
+    D2D1_RECT_F label_rc = r2f(rc);
+    label_rc.right = trc.left - static_cast<float>(dip(kUiRowGap));
+    draw_text(rt_.Get(), fmt, label, label_rc, C(kUiText), AlignH::Left, AlignV::Center);
+  }
+
+  void paint_status_lamp(const RECT& rc, bool on, const D2D1_COLOR_F& on_color, const wchar_t* label,
+                         IDWriteTextFormat* fmt) {
+    const float cy = (rc.top + rc.bottom) * 0.5f;
+    const float radius = static_cast<float>(std::max(4, dip(5)));
+    const float cx = static_cast<float>(rc.left) + radius;
+    ComPtr<ID2D1SolidColorBrush> brush;
+    const D2D1_COLOR_F fill = on ? on_color : C(kUiFill);
+    rt_->CreateSolidColorBrush(fill, brush.GetAddressOf());
+    if (brush) {
+      rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), radius, radius), brush.Get());
+      if (on) {
+        ComPtr<ID2D1SolidColorBrush> rim;
+        rt_->CreateSolidColorBrush(D2D1::ColorF(fill.r, fill.g, fill.b, 0.35f), rim.GetAddressOf());
+        if (rim) {
+          rt_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), radius + 1.5f, radius + 1.5f), rim.Get(), 2.f);
+        }
+      }
+    }
+    D2D1_RECT_F text = r2f(rc);
+    text.left = cx + radius + static_cast<float>(dip(8));
+    draw_text(rt_.Get(), fmt, label, text, C(kUiTextSecondary), AlignH::Left, AlignV::Center);
+  }
+
+  void paint_lang_dropdown(const RECT& rc, const wchar_t* label, IDWriteTextFormat* fmt, bool hover) {
+    fill_round(rt_.Get(), r2f(rc), dip(10), hover ? C(kUiFillHover) : C(kUiFill));
+    D2D1_RECT_F text = r2f(rc);
+    text.left += static_cast<float>(dip(kUiButtonPadX));
+    text.right -= static_cast<float>(dip(28));
+    draw_text(rt_.Get(), fmt, label, text, C(kUiText), AlignH::Left, AlignV::Center);
+
+    ComPtr<ID2D1SolidColorBrush> chev;
+    rt_->CreateSolidColorBrush(C(kUiTextSecondary), chev.GetAddressOf());
+    if (!chev) return;
+    const float cx = static_cast<float>(rc.right - dip(14));
+    const float cy = (rc.top + rc.bottom) * 0.5f;
+    const float s = static_cast<float>(dip(5));
+    ComPtr<ID2D1PathGeometry> geo;
+    ID2D1Factory* fac = nullptr;
+    rt_->GetFactory(&fac);
+    if (!fac || FAILED(fac->CreatePathGeometry(geo.GetAddressOf())) || !geo) return;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(geo->Open(sink.GetAddressOf())) || !sink) return;
+    sink->BeginFigure(D2D1::Point2F(cx - s, cy - s * 0.35f), D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddLine(D2D1::Point2F(cx, cy + s * 0.55f));
+    sink->AddLine(D2D1::Point2F(cx + s, cy - s * 0.35f));
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    sink->Close();
+    rt_->FillGeometry(geo.Get(), chev.Get());
   }
 
   void paint_swatch(const RECT& rc, const Rgba& color, bool hover) {
@@ -970,31 +1137,77 @@ class SettingsUi {
   }
 
   void paint_segments() {
-    fill_round(rt_.Get(), r2f(font_bar_), dip(10), C(kUiFill));
-    const wchar_t* labels[3] = {L"小", L"中", L"大"};
+    const wchar_t* labels[3] = {tr(lang(), StringId::kFontSmall), tr(lang(), StringId::kFontMedium),
+                                tr(lang(), StringId::kFontLarge)};
     const char* keys[3] = {kFontSizeSmall, kFontSizeMedium, kFontSizeLarge};
     RECT parts[3] = {font_small_, font_medium_, font_large_};
+
+    struct Circ {
+      float cx = 0.f;
+      float cy = 0.f;
+      float r = 0.f;
+    };
+    auto as_circle = [](const RECT& rc) {
+      Circ c;
+      c.cx = (rc.left + rc.right) * 0.5f;
+      c.cy = (rc.top + rc.bottom) * 0.5f;
+      c.r = std::min(rc.right - rc.left, rc.bottom - rc.top) * 0.5f;
+      return c;
+    };
+    const Circ c0 = as_circle(parts[0]);
+    const Circ c1 = as_circle(parts[1]);
+    const Circ c2 = as_circle(parts[2]);
+    (void)c1;
+
+    // Outer tapered capsule: narrow left, wide right, rounded ends.
+    {
+      const float pad = static_cast<float>(dip(6));
+      const float rl = c0.r + pad;
+      const float rr = c2.r + pad;
+      const float cy = c0.cy;
+      ComPtr<ID2D1PathGeometry> geo;
+      ID2D1Factory* fac = nullptr;
+      rt_->GetFactory(&fac);
+      if (fac && SUCCEEDED(fac->CreatePathGeometry(geo.GetAddressOf())) && geo) {
+        ComPtr<ID2D1GeometrySink> sink;
+        if (SUCCEEDED(geo->Open(sink.GetAddressOf())) && sink) {
+          sink->BeginFigure(D2D1::Point2F(c0.cx, cy - rl), D2D1_FIGURE_BEGIN_FILLED);
+          sink->AddLine(D2D1::Point2F(c2.cx, cy - rr));
+          sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(c2.cx, cy + rr), D2D1::SizeF(rr, rr), 0.f,
+                                        D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
+          sink->AddLine(D2D1::Point2F(c0.cx, cy + rl));
+          sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(c0.cx, cy - rl), D2D1::SizeF(rl, rl), 0.f,
+                                        D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
+          sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+          sink->Close();
+          ComPtr<ID2D1SolidColorBrush> fill;
+          rt_->CreateSolidColorBrush(C(kUiFill), fill.GetAddressOf());
+          if (fill) rt_->FillGeometry(geo.Get(), fill.Get());
+        }
+      }
+    }
+
     int sel = -1;
     for (int i = 0; i < 3; ++i) {
       if (settings_.ui_font_size == keys[i]) sel = i;
     }
     if (sel >= 0) {
-      D2D1_RECT_F indicator;
-      if (seg_anim_t_ >= 1.f) {
-        indicator = r2f(parts[sel]);
-      } else {
+      Circ hi = as_circle(parts[sel]);
+      if (seg_anim_t_ < 1.f) {
         auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
-        indicator = D2D1::RectF(
-            lerp(seg_from_left_, seg_to_left_, seg_anim_t_),
-            static_cast<float>(parts[sel].top),
-            lerp(seg_from_right_, seg_to_right_, seg_anim_t_),
-            static_cast<float>(parts[sel].bottom));
+        const float from_cx = (seg_from_left_ + seg_from_right_) * 0.5f;
+        const float from_r = std::max(1.f, (seg_from_right_ - seg_from_left_) * 0.5f);
+        hi.cx = lerp(from_cx, hi.cx, seg_anim_t_);
+        hi.r = lerp(from_r, hi.r, seg_anim_t_);
       }
-      fill_round(rt_.Get(), indicator, dip(8), D2D1::ColorF(1, 1, 1, 0.92f));
+      ComPtr<ID2D1SolidColorBrush> sel_br;
+      rt_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.94f), sel_br.GetAddressOf());
+      if (sel_br) rt_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(hi.cx, hi.cy), hi.r, hi.r), sel_br.Get());
     }
+
     for (int i = 0; i < 3; ++i) {
-      auto fmt = make_format(ui_font_point_size(keys[i]), DWRITE_FONT_WEIGHT_NORMAL);
-      draw_text(rt_.Get(), fmt.Get(), labels[i], r2f(parts[i]), C(kUiText), AlignH::Center, AlignV::Center);
+      auto fmt = make_format(ui_font_point_size(keys[i]), DWRITE_FONT_WEIGHT_BOLD);
+      draw_text(rt_.Get(), fmt.Get(), labels[i], r2f(parts[i]), C(kUiText), AlignH::Center, AlignV::Center, false);
     }
   }
 
@@ -1005,30 +1218,45 @@ class SettingsUi {
 
   RECT box(int x, int y, int w, int h) const { return RECT{x, y, x + w, y + h}; }
 
-  void layout(const UiMetrics& um) {
+  void layout(const UiMetrics& um, IDWriteTextFormat* body_fmt, IDWriteTextFormat* sub_fmt) {
     const int m = dip(kUiMargin);
+    const int ind = dip(kUiIndent);
     const int gap = dip(kUiRowGap);
     const int sec = dip(kUiSectionGap);
     const int row = um.row_h;
     const int inner = content_width();
     const int radio_gap = dip(kUiSpace1);
+    const int x0 = m;
+    const int x1 = m + ind;
+    const int x2 = m + ind * 2;
+    const int w0 = inner;
+    const int w1 = std::max(1, inner - ind);
+    const int w2 = std::max(1, inner - ind * 2);
 
     slot_lang_.assign(kMaxAuraSlots, RECT{});
     slot_swatch_.assign(kMaxAuraSlots, RECT{});
     slot_remove_.assign(kMaxAuraSlots, RECT{});
     lang_pick_rows_.clear();
 
+    auto wrapped = [&](IDWriteTextFormat* fmt, const wchar_t* text, int max_w) {
+      return text_height_wrapped(fmt, text, max_w);
+    };
+
     if (page_ == Page::LangPicker) {
       int y = m;
-      lang_picker_title_ = box(m, y, inner, um.title_h);
-      y += um.title_h + gap;
-      lang_back_ = box(m, y, inner, row);
-      y += row + sec;
+      const int header_h = std::max(row, um.title_h);
+      const int back_w = std::min(w0, um.back_btn_w);
+      lang_back_ = box(x0, y, back_w, header_h);
+      const int title_x = lang_back_.right + gap;
+      lang_picker_title_ = box(title_x, y, std::max(0, x0 + w0 - title_x), header_h);
+      y += header_h + sec;
       size_t n = 0;
-      input_language_catalog(n);
+      const auto* cat = input_language_catalog(n);
       for (size_t i = 0; i < n; ++i) {
-        lang_pick_rows_.push_back(box(m, y, inner, row));
-        y += row + radio_gap;
+        const int rh =
+            std::max(row, wrapped(body_fmt, tr(lang(), string_id_for_ui_lang(cat[i].id)), w1) + dip(kUiButtonPadY));
+        lang_pick_rows_.push_back(box(x1, y, w1, rh));
+        y += rh + radio_gap;
       }
       y += m;
       content_height_ = y;
@@ -1037,90 +1265,158 @@ class SettingsUi {
 
     if (active_tab_ == Tab::Aura) {
       int y = m;
-      sec_color_title_ = box(m, y, inner, um.title_h);
-      y += um.title_h;
-      sec_color_sub_ = box(m, y, inner, um.sub_h);
-      y += um.sub_h + gap;
+      aura_title_ = box(x0, y, w0, um.title_h);
+      y += um.title_h + gap;
+      const int aura_sub_h = wrapped(sub_fmt, tr(lang(), StringId::kAuraSub), w0);
+      aura_sub_ = box(x0, y, w0, aura_sub_h);
+      y += aura_sub_h + gap;
+      aura_toggle_ = box(x0, y, w0, row);
+      y += row + sec;
+
+      sec_color_title_ = box(x0, y, w0, um.title_h);
+      y += um.title_h + gap;
+      const int color_sub_h = wrapped(sub_fmt, tr(lang(), StringId::kColorSub), w1);
+      sec_color_sub_ = box(x1, y, w1, color_sub_h);
+      y += color_sub_h + gap;
       const int color_row = std::max(row, um.swatch_h);
-      const int sw_w = std::min(um.swatch_w, inner * 30 / 100);
-      const int rem_w = dip(56);
+      const int sw_w = std::min(um.swatch_w, w1 * 30 / 100);
+      const int rem_h = um.swatch_h;
+      const int rem_w = std::max(dip(22), rem_h * 3 / 4);
       for (size_t i = 0; i < settings_.aura_slots.size(); ++i) {
         const bool can_remove = settings_.aura_slots.size() > static_cast<size_t>(kMinAuraSlots);
-        const int label_w = std::max(1, inner - sw_w - gap - (can_remove ? rem_w + gap : 0));
-        slot_lang_[i] = box(m, y, label_w, color_row);
-        slot_swatch_[i] = box(m + label_w + gap, y + (color_row - um.swatch_h) / 2, sw_w, um.swatch_h);
+        const int rem_gap = dip(4);
+        const int rem_extra = can_remove ? rem_w + rem_gap : 0;
+        const int right_block = sw_w + rem_extra;
+        const int lang_w = std::min(um.lang_drop_w, std::max(1, w1 - right_block - gap));
+        const int flex = std::max(gap, w1 - lang_w - right_block);
+        slot_lang_[i] = box(x1, y, lang_w, color_row);
+        slot_swatch_[i] = box(x1 + lang_w + flex, y + (color_row - um.swatch_h) / 2, sw_w, um.swatch_h);
         if (can_remove) {
-          slot_remove_[i] = box(m + label_w + gap + sw_w + gap, y, rem_w, color_row);
+          const int rem_y = y + (color_row - rem_h) / 2;
+          slot_remove_[i] = box(x1 + lang_w + flex + sw_w + rem_gap, rem_y, rem_w, rem_h);
         } else {
           slot_remove_[i] = box(0, 0, 0, 0);
         }
         y += color_row + gap;
       }
       if (static_cast<int>(settings_.aura_slots.size()) < kMaxAuraSlots) {
-        add_slot_ = box(m, y, inner, row);
+        const int add_w = std::min(w1, um.add_slot_w);
+        add_slot_ = box(x1 + (w1 - add_w) / 2, y, add_w, row);
         y += row + gap;
       } else {
         add_slot_ = box(0, 0, 0, 0);
       }
-      reset_colors_ = box(m, y, inner, row);
-      y += row + sec;
-      rule1_ = box(m, y, inner, 1);
+      {
+        const int rh = std::max(row, wrapped(body_fmt, tr(lang(), StringId::kColorReset), w1));
+        reset_colors_ = box(x1, y, w1, rh);
+        y += rh + sec;
+      }
+      rule1_ = box(x0, y, w0, 1);
       y += sec;
-      sec_width_title_ = box(m, y, inner, um.title_h);
-      y += um.title_h;
-      sec_width_sub_ = box(m, y, inner, um.sub_h);
-      y += um.sub_h + gap;
-      const int value_w = std::max(dip(48), inner * 20 / 100);
-      width_value_ = box(m + inner - value_w, y, value_w, row);
-      width_track_ = box(m, y, std::max(1, inner - value_w - gap), row);
-      y += row + gap;
-      reset_width_ = box(m, y, inner, row);
-      y += row + sec;
-      rule2_ = box(m, y, inner, 1);
-      y += sec;
-      sec_disp_title_ = box(m, y, inner, um.title_h);
+
+      sec_width_title_ = box(x0, y, w0, um.title_h);
       y += um.title_h + gap;
-      mode_always_ = box(m, y, inner, row);
-      y += row + radio_gap;
-      mode_focus_ = box(m, y, inner, row);
-      y += row;
+      const int width_sub_h = wrapped(sub_fmt, tr(lang(), StringId::kWidthSub), w1);
+      sec_width_sub_ = box(x1, y, w1, width_sub_h);
+      y += width_sub_h + gap;
+      const int value_w = std::max(dip(48), w1 * 20 / 100);
+      width_value_ = box(x1 + w1 - value_w, y, value_w, row);
+      width_track_ = box(x1, y, std::max(1, w1 - value_w - gap), row);
+      y += row + gap;
+      {
+        const int rh = std::max(row, wrapped(body_fmt, tr(lang(), StringId::kWidthReset), w1));
+        reset_width_ = box(x1, y, w1, rh);
+        y += rh + sec;
+      }
+      rule2_ = box(x0, y, w0, 1);
+      y += sec;
+
+      sec_disp_title_ = box(x0, y, w0, um.title_h);
+      y += um.title_h + gap;
+      {
+        const int rh = std::max(row, wrapped(body_fmt, tr(lang(), StringId::kDisplayAlways), w1) + dip(4));
+        mode_always_ = box(x1, y, w1, rh);
+        y += rh + radio_gap;
+      }
+      {
+        const int rh = std::max(row, wrapped(body_fmt, tr(lang(), StringId::kDisplayFocus), w1) + dip(4));
+        mode_focus_ = box(x1, y, w1, rh);
+        y += rh;
+      }
       if (settings_.display_mode == kDisplayModeOnFocus) {
-        const int hover_h = std::max(1, static_cast<int>(std::lround(row * hover_reveal_t_)));
-        hover_box_ = box(m + dip(12), y, std::max(0, inner - dip(12)), hover_h);
+        const int full_h = std::max(row, wrapped(body_fmt, tr(lang(), StringId::kDisplayHover), w2) + dip(4));
+        const int hover_h = std::max(1, static_cast<int>(std::lround(full_h * hover_reveal_t_)));
+        hover_box_ = box(x2, y, w2, hover_h);
         y += hover_h;
       } else {
-        hover_box_ = box(m, y, 0, 0);
+        hover_box_ = box(x2, y, 0, 0);
       }
-      y += radio_gap;
-      mode_hidden_ = box(m, y, inner, row);
-      y += row + m;
+      y += radio_gap + m;
       content_height_ = y;
     } else if (active_tab_ == Tab::Firefly) {
-      // Firefly layout computed during paint
+      int y = m;
+      ff_title_ = box(x0, y, w0, um.title_h);
+      y += um.title_h + gap;
+      const int ff_sub_h = wrapped(sub_fmt, tr(lang(), StringId::kFireflySub), w0);
+      ff_sub_ = box(x0, y, w0, ff_sub_h);
+      y += ff_sub_h + gap;
+      ff_toggle_ = box(x0, y, w0, row);
+      y += row + sec;
+      {
+        const int rh = wrapped(sub_fmt, tr(lang(), StringId::kFireflyCapsSection), w1);
+        ff_caps_title_ = box(x1, y, w1, rh);
+        y += rh + gap;
+      }
+      auto caps_row = [&](StringId id, RECT& out) {
+        const int rh = std::max(row, wrapped(body_fmt, tr(lang(), id), w1) + dip(4));
+        out = box(x1, y, w1, rh);
+        y += rh + radio_gap;
+      };
+      caps_row(StringId::kFireflyCapsPreserve, ff_caps_preserve_);
+      caps_row(StringId::kFireflyCapsUppercase, ff_caps_upper_);
+      caps_row(StringId::kFireflyCapsLowercase, ff_caps_lower_);
+      y += sec - radio_gap;
+      ff_status_ = box(x1, y, w1, row);
+      y += row + gap;
+      ff_caps_ok_ = box(x1, y, w1, std::max(um.sub_h, wrapped(sub_fmt, tr(lang(), StringId::kFireflyCapsOk), w1)));
+      y += (ff_caps_ok_.bottom - ff_caps_ok_.top) + dip(kUiSpace1);
+      ff_led_ok_ = box(x1, y, w1, std::max(um.sub_h, wrapped(sub_fmt, tr(lang(), StringId::kFireflyLedOk), w1)));
+      y += (ff_led_ok_.bottom - ff_led_ok_.top) + dip(kUiSpace1);
+      ff_dnd_ok_ = box(x1, y, w1, std::max(um.sub_h, wrapped(sub_fmt, tr(lang(), StringId::kFireflyDndOk), w1)));
+      y += (ff_dnd_ok_.bottom - ff_dnd_ok_.top) + m;
+      content_height_ = y;
     } else {
       int y = m;
-      sec_font_title_ = box(m, y, inner, um.title_h);
-      y += um.title_h;
-      sec_font_sub_ = box(m, y, inner, um.sub_h);
-      y += um.sub_h + gap;
-      font_bar_ = box(m, y, inner, um.font_bar_h);
-      const int inset = dip(kUiSpace1);
-      const int inner_h = std::max(1, um.font_bar_h - inset * 2);
-      const int seg_w = inner / 3;
-      font_small_ = box(m + inset, y + inset, std::max(1, seg_w - inset - 1), inner_h);
-      font_medium_ = box(m + seg_w + 1, y + inset, std::max(1, seg_w - 2), inner_h);
-      font_large_ = box(m + seg_w * 2 + 1, y + inset, std::max(1, inner - seg_w * 2 - inset - 1), inner_h);
+      sec_font_title_ = box(x0, y, w0, um.title_h);
+      y += um.title_h + gap;
+      const int font_sub_h = wrapped(sub_fmt, tr(lang(), StringId::kFontSub), w1);
+      sec_font_sub_ = box(x1, y, w1, font_sub_h);
+      y += font_sub_h + gap;
+      font_bar_ = box(x0, y, w0, um.font_bar_h);
+      const int cy = y + um.font_bar_h / 2;
+      const int pad = dip(6);
+      const int cx0 = x0 + pad + um.font_r_s;
+      const int cx2 = x0 + w0 - pad - um.font_r_l;
+      const int cx1 = (cx0 + cx2) / 2;
+      font_small_ = box(cx0 - um.font_r_s, cy - um.font_r_s, um.font_r_s * 2, um.font_r_s * 2);
+      font_medium_ = box(cx1 - um.font_r_m, cy - um.font_r_m, um.font_r_m * 2, um.font_r_m * 2);
+      font_large_ = box(cx2 - um.font_r_l, cy - um.font_r_l, um.font_r_l * 2, um.font_r_l * 2);
       y += um.font_bar_h + sec;
-      rule3_ = box(m, y, inner, 1);
+      rule3_ = box(x0, y, w0, 1);
       y += sec;
-      y += um.title_h + gap + row + sec;
-      lang_rule_ = box(m, y, inner, 1);
+      // Language section (title + change button); about/quit follow.
+      // Positions must match paint() for the language block.
+      {
+        // Reserve: title + gap + row + sec (lang_rule) — paint recomputes lang_change_ from rule3_.
+        y += um.title_h + gap + row + sec;
+      }
+      lang_rule_ = box(x0, y, w0, 1);
       y += sec;
-      rule4_ = box(m, y, inner, 1);
+      rule4_ = box(x0, y, w0, 1);
       y += sec;
-      about_ = box(m, y, inner, row);
+      about_ = box(x0, y, w0, row);
       y += row + gap;
-      quit_ = box(m, y, inner, row);
+      quit_ = box(x0, y, w0, row);
       y += row + m;
       content_height_ = y;
     }
@@ -1130,6 +1426,15 @@ class SettingsUi {
     return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
   }
 
+  bool contains_circle(const RECT& r, int x, int y) const {
+    const float cx = (r.left + r.right) * 0.5f;
+    const float cy = (r.top + r.bottom) * 0.5f;
+    const float rad = std::min(r.right - r.left, r.bottom - r.top) * 0.5f;
+    const float dx = static_cast<float>(x) - cx;
+    const float dy = static_cast<float>(y) - cy;
+    return dx * dx + dy * dy <= rad * rad;
+  }
+
   Hit hit_test(int x, int y) const {
     if (page_ != Page::LangPicker) {
       if (contains(tab_aura_, x, y)) return Hit::TabAura;
@@ -1137,9 +1442,9 @@ class SettingsUi {
       if (contains(tab_general_, x, y)) return Hit::TabGeneral;
     }
 
-    const int tab_h = dip(kUiTabBarHeight);
+    const int tab_h = tab_bar_h();
     if (page_ != Page::LangPicker && y < tab_h) return Hit::None;
-    const int cy = (page_ == Page::LangPicker) ? (y - tab_h + scroll_y_) : (y - tab_h + scroll_y_);
+    const int cy = y - tab_h + scroll_y_;
 
     if (scroll_max_ > 0 && contains(scroll_bar_, x, y)) return Hit::ScrollBar;
 
@@ -1168,7 +1473,7 @@ class SettingsUi {
       if (contains(reset_width_, x, cy)) return Hit::ResetWidth;
       if (contains(mode_always_, x, cy)) return Hit::ModeAlways;
       if (contains(mode_focus_, x, cy)) return Hit::ModeFocus;
-      if (contains(mode_hidden_, x, cy)) return Hit::ModeHidden;
+      if (contains(aura_toggle_, x, cy)) return Hit::AuraToggle;
       if (settings_.display_mode == kDisplayModeOnFocus && hover_box_.bottom > hover_box_.top &&
           contains(hover_box_, x, cy))
         return Hit::Hover;
@@ -1180,9 +1485,9 @@ class SettingsUi {
         if (contains(ff_caps_lower_, x, cy)) return Hit::FireflyCapsLowercase;
       }
     } else {
-      if (contains(font_small_, x, cy)) return Hit::FontSmall;
-      if (contains(font_medium_, x, cy)) return Hit::FontMedium;
-      if (contains(font_large_, x, cy)) return Hit::FontLarge;
+      if (contains_circle(font_small_, x, cy)) return Hit::FontSmall;
+      if (contains_circle(font_medium_, x, cy)) return Hit::FontMedium;
+      if (contains_circle(font_large_, x, cy)) return Hit::FontLarge;
       if (contains(lang_change_, x, cy)) return Hit::LangChange;
       if (contains(about_, x, cy)) return Hit::About;
       if (contains(quit_, x, cy)) return Hit::Quit;
@@ -1191,26 +1496,40 @@ class SettingsUi {
   }
 
   void pick_slot_language(size_t index) {
-    if (index >= settings_.aura_slots.size()) return;
+    if (index >= settings_.aura_slots.size() || index >= slot_lang_.size()) return;
     std::vector<std::string> used;
     for (size_t i = 0; i < settings_.aura_slots.size(); ++i) {
       if (i != index) used.push_back(settings_.aura_slots[i].lang_id);
     }
-    auto choices = unused_input_languages(used);
-    choices.insert(choices.begin(), settings_.aura_slots[index].lang_id);
+    const std::string& current = settings_.aura_slots[index].lang_id;
+    const auto choices = aura_slot_language_choices(used, current);
+    if (choices.empty()) return;
 
     HMENU menu = CreatePopupMenu();
+    UINT selected_id = 0;
     for (size_t i = 0; i < choices.size(); ++i) {
-      AppendMenuW(menu, MF_STRING, static_cast<UINT_PTR>(i + 1),
-                  input_language_display_name(choices[i], lang() != Lang::En));
+      const bool selected = choices[i] == current;
+      const UINT id = static_cast<UINT>(i + 1);
+      UINT flags = MF_STRING | (selected ? MF_CHECKED : MF_UNCHECKED);
+      AppendMenuW(menu, flags, id, input_language_display_name(choices[i], lang() != Lang::En));
+      if (selected) selected_id = id;
     }
-    POINT pt{};
-    GetCursorPos(&pt);
-    const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, hwnd_, nullptr);
+    if (selected_id != 0) {
+      CheckMenuRadioItem(menu, 1, static_cast<UINT>(choices.size()), selected_id, MF_BYCOMMAND);
+      SetMenuDefaultItem(menu, selected_id, FALSE);
+    }
+    // Anchor under the language dropdown (client DIP → screen pixels).
+    const RECT& rc = slot_lang_[index];
+    POINT pt{MulDiv(rc.left, dpi_, 96),
+             MulDiv(dip(kUiTabBarHeight) - scroll_y_ + rc.bottom, dpi_, 96)};
+    ClientToScreen(hwnd_, &pt);
+    const int cmd =
+        TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_VERTICAL, pt.x, pt.y, 0, hwnd_, nullptr);
     DestroyMenu(menu);
     if (cmd <= 0) return;
     const size_t choice = static_cast<size_t>(cmd - 1);
     if (choice >= choices.size()) return;
+    if (settings_.aura_slots[index].lang_id == choices[choice]) return;
     settings_.aura_slots[index].lang_id = choices[choice];
     emit();
   }
@@ -1373,10 +1692,8 @@ class SettingsUi {
         settings_.display_mode = kDisplayModeOnFocus;
         emit();
         break;
-      case Hit::ModeHidden:
-        settings_.display_mode = kDisplayModeHidden;
-        settings_.show_on_hover = false;
-        hover_reveal_t_ = 0.f;
+      case Hit::AuraToggle:
+        settings_.aura_enabled = !settings_.aura_enabled;
         emit();
         break;
       case Hit::Hover:
@@ -1436,7 +1753,6 @@ class SettingsUi {
           const size_t i = static_cast<size_t>(hv - static_cast<int>(Hit::LangPick0));
           if (i < n) {
             settings_.language = cat[i].id;
-            page_ = Page::Main;
             emit();
           }
         }
@@ -1470,11 +1786,12 @@ class SettingsUi {
   bool reset_width_flash_ = false;
   bool width_editing_ = false;
   std::wstring width_edit_buf_;
+  RECT aura_title_{}, aura_sub_{}, aura_toggle_{};
   RECT sec_color_title_{}, sec_color_sub_{}, reset_colors_{};
   std::vector<RECT> slot_lang_, slot_swatch_, slot_remove_;
   RECT add_slot_{};
   RECT rule1_{}, sec_width_title_{}, sec_width_sub_{}, width_track_{}, width_value_{}, reset_width_{};
-  RECT rule2_{}, sec_disp_title_{}, mode_always_{}, mode_focus_{}, hover_box_{}, mode_hidden_{};
+  RECT rule2_{}, sec_disp_title_{}, mode_always_{}, mode_focus_{}, hover_box_{};
   RECT rule3_{}, sec_font_title_{}, sec_font_sub_{}, font_bar_{}, font_small_{}, font_medium_{}, font_large_{};
   RECT rule4_{}, about_{}, quit_{}, scroll_bar_{};
 
@@ -1485,7 +1802,8 @@ class SettingsUi {
   int tab_content_h_[3]{0, 0, 0};
   RECT lang_change_{}, lang_rule_{}, lang_picker_title_{}, lang_back_{};
   std::vector<RECT> lang_pick_rows_;
-  RECT ff_toggle_{}, ff_caps_title_{}, ff_caps_preserve_{}, ff_caps_upper_{}, ff_caps_lower_{};
+  RECT ff_title_{}, ff_sub_{}, ff_toggle_{}, ff_caps_title_{}, ff_caps_preserve_{}, ff_caps_upper_{},
+      ff_caps_lower_{};
   RECT ff_status_{}, ff_caps_ok_{}, ff_led_ok_{}, ff_dnd_ok_{};
   bool firefly_active_ = false;
   bool firefly_caps_ok_ = true;

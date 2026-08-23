@@ -61,4 +61,16 @@ std::vector<std::string> unused_input_languages(const std::vector<std::string>& 
   return out;
 }
 
+std::vector<std::string> aura_slot_language_choices(const std::vector<std::string>& used_by_others,
+                                                    std::string_view current) {
+  auto choices = unused_input_languages(used_by_others);
+  const auto it = std::find(choices.begin(), choices.end(), current);
+  if (it == choices.end()) {
+    if (is_known_input_language(current)) choices.insert(choices.begin(), std::string(current));
+  } else if (it != choices.begin()) {
+    std::rotate(choices.begin(), it, it + 1);
+  }
+  return choices;
+}
+
 }  // namespace imeaura

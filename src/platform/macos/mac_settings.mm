@@ -7,7 +7,9 @@
 #import <AppKit/AppKit.h>
 
 #include <cmath>
+#include <cstring>
 #include <cwchar>
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
@@ -43,6 +45,42 @@ Rgba NSToRgba(NSColor* color) {
 void Emit() {
   settings = normalize_settings(settings);
   if (callback) callback(settings);
+}
+
+NSString* FindAssetPath(const char* relative) {
+  namespace fs = std::filesystem;
+  @autoreleasepool {
+    NSString* exe = [[NSProcessInfo processInfo].arguments.firstObject stringByStandardizingPath];
+    if (!exe) return nil;
+    fs::path dir = fs::path([exe fileSystemRepresentation]).parent_path();
+    for (int i = 0; i < 6; ++i) {
+      const auto candidate = dir / relative;
+      if (fs::exists(candidate)) {
+        return [NSString stringWithUTF8String:candidate.string().c_str()];
+      }
+      if (!dir.has_parent_path()) break;
+      dir = dir.parent_path();
+    }
+  }
+  return nil;
+}
+
+NSImage* LoadUiIcon(const char* relative, NSString* accessibilityLabel) {
+  NSString* path = FindAssetPath(relative);
+  NSImage* image = nil;
+  if (path) image = [[NSImage alloc] initWithContentsOfFile:path];
+  if (!image) {
+    // Fallback: SF Symbol when SVG asset is missing from the run tree.
+    if (@available(macOS 11.0, *)) {
+      const char* symbol = "plus";
+      if (strstr(relative, "trash")) symbol = "trash";
+      else if (strstr(relative, "back")) symbol = "chevron.backward";
+      image = [NSImage imageWithSystemSymbolName:[NSString stringWithUTF8String:symbol]
+                        accessibilityDescription:accessibilityLabel];
+    }
+  }
+  (void)accessibilityLabel;
+  return image;
 }
 
 }  // namespace mac_settings_state
@@ -142,12 +180,15 @@ void Emit() {
     for (size_t j = 0; j < settings.aura_slots.size(); ++j) {
       if (j != i) used.push_back(settings.aura_slots[j].lang_id);
     }
-    auto choices = unused_input_languages(used);
-    choices.insert(choices.begin(), settings.aura_slots[i].lang_id);
-    for (const auto& id : choices) {
+    auto choices = aura_slot_language_choices(used, settings.aura_slots[i].lang_id);
+    NSInteger selectIndex = 0;
+    for (size_t ci = 0; ci < choices.size(); ++ci) {
+      const auto& id = choices[ci];
       [pop addItemWithTitle:WtoNS(input_language_display_name(id, true))];
       pop.lastItem.representedObject = [NSString stringWithUTF8String:id.c_str()];
+      if (id == settings.aura_slots[i].lang_id) selectIndex = static_cast<NSInteger>(ci);
     }
+    [pop selectItemAtIndex:selectIndex];
     pop.tag = static_cast<NSInteger>(i);
     pop.target = self;
     pop.action = @selector(onSlotLang:);
@@ -156,21 +197,37 @@ void Emit() {
     well.tag = static_cast<NSInteger>(i);
     well.target = self;
     well.action = @selector(onSlotColor:);
-    NSButton* remove =
-        [NSButton buttonWithTitle:WtoNS(tr(lang_from_key(settings.language), StringId::kRemoveColorSlot))
-                           target:self
-                           action:@selector(onRemoveSlot:)];
+    NSString* removeLabel = WtoNS(tr(lang_from_key(settings.language), StringId::kRemoveColorSlot));
+    NSButton* remove = [NSButton buttonWithTitle:@"" target:self action:@selector(onRemoveSlot:)];
+    remove.image = LoadUiIcon("img/icon_trash.svg", removeLabel);
+    remove.imagePosition = NSImageOnly;
+    remove.bezelStyle = NSBezelStyleRounded;
+    remove.bordered = YES;
+    remove.toolTip = removeLabel;
     remove.tag = static_cast<NSInteger>(i);
     remove.enabled = settings.aura_slots.size() > static_cast<size_t>(kMinAuraSlots);
+    [remove setAccessibilityLabel:removeLabel];
     [row addArrangedSubview:pop];
+    NSView* spacer = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 8, 28)];
+    [spacer setContentHuggingPriority:NSLayoutPriorityDefaultLow
+                       forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [spacer setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
+                                     forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [row addArrangedSubview:spacer];
     [row addArrangedSubview:well];
     [row addArrangedSubview:remove];
+    row.distribution = NSStackViewDistributionFill;
+    [pop setContentHuggingPriority:NSLayoutPriorityDefaultHigh
+                    forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [pop setContentCompressionResistancePriority:NSLayoutPriorityRequired
+                                  forOrientation:NSLayoutConstraintOrientationHorizontal];
     [self.auraStack addArrangedSubview:row];
   }
   if (static_cast<int>(settings.aura_slots.size()) < kMaxAuraSlots) {
-    NSButton* add = [NSButton buttonWithTitle:WtoNS(tr(lang_from_key(settings.language), StringId::kAddColorSlot))
-                                       target:self
-                                       action:@selector(onAddSlot:)];
+    NSString* addLabel = WtoNS(tr(lang_from_key(settings.language), StringId::kAddColorSlot));
+    NSButton* add = [NSButton buttonWithTitle:addLabel target:self action:@selector(onAddSlot:)];
+    add.image = LoadUiIcon("img/icon_add.svg", addLabel);
+    add.imagePosition = NSImageLeft;
     [self.auraStack addArrangedSubview:add];
   }
 }

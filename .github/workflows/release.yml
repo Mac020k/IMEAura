@@ -73,6 +73,7 @@ jobs:
         run: |
           mkdir -p dist/IMEAura
           cp build/linux-ninja/src/IMEAura LICENSE THIRD_PARTY_NOTICES.md img/icon.ico dist/IMEAura/
+          cp -r img dist/IMEAura/
           (cd dist/IMEAura && zip -r "../../${{ matrix.artifact_name }}.zip" .)
 
       - name: Package (macOS)
@@ -80,6 +81,7 @@ jobs:
         run: |
           mkdir -p dist/IMEAura.app/Contents/MacOS
           cp build/macos-clang/src/IMEAura dist/IMEAura.app/Contents/MacOS/
+          cp -R img dist/IMEAura.app/Contents/MacOS/
           cp LICENSE THIRD_PARTY_NOTICES.md dist/IMEAura.app/Contents/
           ditto -c -k --keepParent dist/IMEAura.app "${{ matrix.artifact_name }}.zip"
 

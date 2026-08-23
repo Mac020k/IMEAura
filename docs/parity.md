@@ -15,9 +15,9 @@ Native implementation: C++20 in `src/`.
 - [x] Launch shows edge gradient and control window
 - [x] Per-language Aura colors (2–7 slots; Phase 1: ja / zh-Hans / zh-Hant / ko / en) including alpha; reset to defaults
 - [x] Gradient width 1–100 px (default 15)
-- [x] Display modes: Always / Only while typing / Hidden
+- [x] Display modes: Always / Only while typing (+ optional hover); Aura enable toggle
 - [x] “Also show when hovering a text box” (only with Only while typing)
-- [x] Text sizes Small (11 pt) / Medium (13 pt) / Large (16 pt)
+- [x] Text sizes Small (11 pt) / Medium (15 pt) / Large (20 pt)
 - [x] Click-through overlay, always on top
 - [x] Follows display of active window (hover-only follows cursor display)
 - [x] Multi-monitor
@@ -40,7 +40,7 @@ Native implementation: C++20 in `src/`.
 - [x] Reset buttons flash 「戻しました」 (~1100 ms)
 - [x] Gradient width spin box (click px field to type 1–100)
 - [x] Segment control font preview (小 / 中 / 大 at respective point sizes)
-- [x] Aura language dropdown (popup menu) per color slot; add/remove (min 2, max 7)
+- [x] Aura language dropdown (popup menu) per color slot; add/remove (min 2, max 7); current language checked / selected in the menu
 - [x] General language button opens in-window language list page
 
 ## Settings JSON schema
@@ -49,7 +49,8 @@ Defined in `src/core/settings.{h,cpp}`:
 
 - `aura_colors`: array of `{ "lang", "color": [r,g,b,a] }` (2–7; known IDs only)
 - `color_jp`, `color_en`: `[r,g,b,a]` 0–255 (legacy read + compatibility write)
-- `display_mode`: `always` | `on_focus` | `hidden`
+- `aura_enabled`: boolean (default `true`); legacy `display_mode=hidden` migrates to `aura_enabled=false`
+- `display_mode`: `always` | `on_focus`
 - `show_on_hover`: boolean (forced false unless `on_focus`)
 - `ui_font_size`: `small` | `medium` | `large`
 - `gradient_width`: 1–100

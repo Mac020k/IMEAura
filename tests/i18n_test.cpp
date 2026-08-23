@@ -39,6 +39,10 @@ int main() {
 
   EXPECT(string_id_for_ui_lang("zh-Hans") == StringId::kLangZhHans);
 
+  EXPECT(wcscmp(tr(Lang::En, StringId::kFontSmall), L"S") == 0);
+  EXPECT(wcscmp(tr(Lang::Ja, StringId::kFontSmall), L"\u5C0F") == 0);
+  EXPECT(wcscmp(tr(Lang::Ko, StringId::kFontMedium), L"\uC911") == 0);
+
   if (failures) return 1;
   std::cout << "i18n_test: OK\n";
   return 0;

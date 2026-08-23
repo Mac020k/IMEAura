@@ -88,6 +88,12 @@ int main() {
   EXPECT(loaded.firefly_led_mode == "auto");
   EXPECT(loaded.firefly_caps_mode == "uppercase");
 
+  raw.display_mode = kDisplayModeHidden;
+  raw.aura_enabled = true;
+  loaded = normalize_settings(raw);
+  EXPECT(!loaded.aura_enabled);
+  EXPECT(loaded.display_mode == kDisplayModeAlways);
+
   // nested aura_colors parse
   {
     json::Value root;

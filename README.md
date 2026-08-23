@@ -22,9 +22,11 @@ The app is a native **C++20** project. Overlays and settings UIs use each OS’s
 - Click-through edge overlay (always on top)
 - Multi-monitor follow (active window; cursor when hover-only)
 - Custom per-language edge colors (up to 7 slots; Phase 1: ja / zh-Hans / zh-Hant / ko / en); gradient width 1–100 px
-- Display modes: Always / Only while typing / Hidden (+ optional hover)
+- Display modes: Always / Only while typing (+ optional hover); Aura enable toggle
 - Tabbed settings (Aura / Firefly / General) with UI in Japanese, English, Simplified/Traditional Chinese, and Korean
 - Language picker page under General; Aura color rows use language dropdowns
+- Icon affordances for Aura color add (plus) / remove (trash) and language-picker Back (chevron), with localized labels / tooltips where the OS supports them
+- Windows color picker: RGB/HSB modes, hex + numeric text entry, and default-color presets
 - Catalog of future IME languages: [docs/ime-languages.md](docs/ime-languages.md)
 - Tray / menu-bar icon — closing settings hides the window; the app keeps running
 - **Firefly**: CapsLock as Available / Busy (Do Not Disturb) with LED + notification suppression (Windows, macOS, Linux/X11)
@@ -113,7 +115,8 @@ Stored as JSON (`src/core/settings.{h,cpp}`):
 | --- | --- | --- |
 | `aura_colors` | `[{"lang":"ja\|zh-Hans\|zh-Hant\|ko\|en","color":[r,g,b,a]}, …]` (2–7) | ja + en defaults |
 | `color_jp` / `color_en` | `[r,g,b,a]` 0–255 | Written for compatibility; prefer `aura_colors` |
-| `display_mode` | `always` \| `on_focus` \| `hidden` | `always` |
+| `aura_enabled` | bool | `true` |
+| `display_mode` | `always` \| `on_focus` | `always` |
 | `show_on_hover` | bool (only with `on_focus`) | `false` |
 | `ui_font_size` | `small` \| `medium` \| `large` | `medium` |
 | `gradient_width` | 1–100 | `15` |

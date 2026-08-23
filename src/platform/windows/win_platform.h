@@ -51,6 +51,7 @@ class WinPlatformBackend : public PlatformBackend {
   void sync_text_watchers();
   void refresh_reduce_motion_cache();
   void adjust_poll_interval();
+  void apply_settings(const Settings& s);
 
   Settings settings_{};
   std::array<HWND, kEdgeHostCount> host_hwnds_{};

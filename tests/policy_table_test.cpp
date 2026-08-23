@@ -40,10 +40,11 @@ int main() {
   out = evaluate_policy(s, in);
   EXPECT(out.target_color.r == kDefaultColorEn.r);
 
-  s.display_mode = kDisplayModeHidden;
+  s.aura_enabled = false;
   out = evaluate_policy(s, in);
   EXPECT(!out.visible);
 
+  s.aura_enabled = true;
   s.display_mode = kDisplayModeOnFocus;
   in.text_focused = true;
   out = evaluate_policy(s, in);

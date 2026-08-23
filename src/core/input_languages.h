@@ -29,5 +29,8 @@ std::string normalize_input_language(std::string_view id);
 std::string normalize_ui_language(std::string_view id);
 const wchar_t* input_language_display_name(std::string_view id, bool prefer_native);
 std::vector<std::string> unused_input_languages(const std::vector<std::string>& used);
+// Languages still free for a slot, with `current` first and never duplicated.
+std::vector<std::string> aura_slot_language_choices(const std::vector<std::string>& used_by_others,
+                                                    std::string_view current);
 
 }  // namespace imeaura

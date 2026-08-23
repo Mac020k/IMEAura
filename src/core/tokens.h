@@ -27,8 +27,8 @@ inline constexpr int kRevealMs = 220;
 inline constexpr int kStatusFlashMs = 1100;
 
 inline constexpr int kFontPointSizeSmall = 11;
-inline constexpr int kFontPointSizeMedium = 13;
-inline constexpr int kFontPointSizeLarge = 16;
+inline constexpr int kFontPointSizeMedium = 15;
+inline constexpr int kFontPointSizeLarge = 20;
 
 inline constexpr Rgba kUiBg{248, 249, 252, 255};
 inline constexpr Rgba kUiText{28, 28, 30, 255};
@@ -40,6 +40,7 @@ inline constexpr Rgba kUiDanger{200, 50, 50, 255};
 inline constexpr Rgba kUiDangerFill{200, 50, 50, 22};
 
 inline constexpr int kUiMargin = 24;
+inline constexpr int kUiIndent = 16;
 inline constexpr int kUiRowGap = 8;
 inline constexpr int kUiSectionGap = 16;
 inline constexpr int kUiSpace1 = 4;
@@ -50,10 +51,10 @@ inline constexpr int kUiSwatchW = 104;
 inline constexpr int kUiSwatchH = 32;
 inline constexpr int kUiMinWindowW = 300;
 inline constexpr int kUiMinWindowH = 300;
-inline constexpr int kUiScrollBarWidth = 12;
+inline constexpr int kUiScrollBarWidth = 10;
 inline constexpr int kUiScrollBarMarginY = 8;
-inline constexpr int kUiScrollBarMarginRight = 3;
-inline constexpr int kUiScrollBarGutter = kUiScrollBarWidth + kUiScrollBarMarginRight;
+inline constexpr int kUiScrollBarMarginRight = 2;
+inline constexpr int kUiScrollBarGutter = kUiScrollBarWidth + kUiScrollBarMarginRight + 4;
 
 inline constexpr int kUiTabBarHeight = 40;
 inline constexpr int kUiTabPadX = 16;

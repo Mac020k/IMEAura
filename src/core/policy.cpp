@@ -9,7 +9,7 @@ PolicyOutput evaluate_policy(const Settings& settings, const PolicyInput& input)
   out.focused = input.text_focused;
   out.hovered = input.text_hovered;
 
-  if (settings.display_mode == kDisplayModeHidden) {
+  if (!settings.aura_enabled) {
     out.visible = false;
     out.follow = FollowTarget::ActiveWindow;
   } else if (settings.display_mode == kDisplayModeAlways) {

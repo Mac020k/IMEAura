@@ -6,7 +6,9 @@
 
 #include <cstdio>
 #include <gtk/gtk.h>
+#include <unistd.h>
 
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
@@ -46,6 +48,55 @@ std::string WideToUtf8(const wchar_t* s) {
     }
   }
   return out;
+}
+
+std::string FindAssetPath(const char* relative) {
+  namespace fs = std::filesystem;
+  char exe[4096]{};
+  const ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+  if (n <= 0) return {};
+  fs::path dir = fs::path(std::string(exe, static_cast<size_t>(n))).parent_path();
+  for (int i = 0; i < 6; ++i) {
+    const auto candidate = dir / relative;
+    if (fs::exists(candidate)) return candidate.string();
+    if (!dir.has_parent_path()) break;
+    dir = dir.parent_path();
+  }
+  return {};
+}
+
+GtkWidget* MakeIconButton(const char* asset_rel, const char* fallback_icon, const std::string& label) {
+  GtkWidget* btn = gtk_button_new();
+  const std::string path = FindAssetPath(asset_rel);
+  GtkWidget* image = nullptr;
+  if (!path.empty()) {
+    image = gtk_image_new_from_file(path.c_str());
+  }
+  if (!image) {
+    image = gtk_image_new_from_icon_name(fallback_icon);
+  }
+  gtk_button_set_child(GTK_BUTTON(btn), image);
+  gtk_widget_set_tooltip_text(btn, label.c_str());
+  gtk_accessible_update_property(GTK_ACCESSIBLE(btn), GTK_ACCESSIBLE_PROPERTY_LABEL, label.c_str(), -1);
+  return btn;
+}
+
+GtkWidget* MakeLabeledIconButton(const char* asset_rel, const char* fallback_icon, const std::string& label) {
+  GtkWidget* btn = gtk_button_new();
+  GtkWidget* row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  const std::string path = FindAssetPath(asset_rel);
+  GtkWidget* image = nullptr;
+  if (!path.empty()) {
+    image = gtk_image_new_from_file(path.c_str());
+  }
+  if (!image) {
+    image = gtk_image_new_from_icon_name(fallback_icon);
+  }
+  gtk_box_append(GTK_BOX(row), image);
+  gtk_box_append(GTK_BOX(row), gtk_label_new(label.c_str()));
+  gtk_button_set_child(GTK_BUTTON(btn), row);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(btn), GTK_ACCESSIBLE_PROPERTY_LABEL, label.c_str(), -1);
+  return btn;
 }
 
 void RebuildAura(GtkWidget* box);
@@ -100,10 +151,10 @@ void OnSlotLang(GtkDropDown* drop, GParamSpec*, gpointer data) {
   for (size_t j = 0; j < g_settings.aura_slots.size(); ++j) {
     if (j != ctx->index) used.push_back(g_settings.aura_slots[j].lang_id);
   }
-  auto choices = unused_input_languages(used);
-  choices.insert(choices.begin(), g_settings.aura_slots[ctx->index].lang_id);
+  auto choices = aura_slot_language_choices(used, g_settings.aura_slots[ctx->index].lang_id);
   const guint idx = gtk_drop_down_get_selected(drop);
   if (idx < choices.size()) {
+    if (g_settings.aura_slots[ctx->index].lang_id == choices[idx]) return;
     g_settings.aura_slots[ctx->index].lang_id = choices[idx];
     Emit();
     RebuildAura(ctx->box);
@@ -124,8 +175,7 @@ void RebuildAura(GtkWidget* box) {
     for (size_t j = 0; j < g_settings.aura_slots.size(); ++j) {
       if (j != i) used.push_back(g_settings.aura_slots[j].lang_id);
     }
-    auto choices = unused_input_languages(used);
-    choices.insert(choices.begin(), g_settings.aura_slots[i].lang_id);
+    auto choices = aura_slot_language_choices(used, g_settings.aura_slots[i].lang_id);
     std::vector<std::string> owned;
     owned.reserve(choices.size());
     for (const auto& id : choices) {
@@ -136,9 +186,21 @@ void RebuildAura(GtkWidget* box) {
     for (const auto& s : owned) labels.push_back(s.c_str());
     labels.push_back(nullptr);
     GtkWidget* drop = gtk_drop_down_new_from_strings(labels.data());
+    guint selected = 0;
+    for (size_t ci = 0; ci < choices.size(); ++ci) {
+      if (choices[ci] == g_settings.aura_slots[i].lang_id) {
+        selected = static_cast<guint>(ci);
+        break;
+      }
+    }
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(drop), selected);
     auto* ctx = new SlotCtx{i, box};
     g_signal_connect(drop, "notify::selected", G_CALLBACK(OnSlotLang), ctx);
     gtk_box_append(GTK_BOX(row), drop);
+
+    GtkWidget* spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(spacer, TRUE);
+    gtk_box_append(GTK_BOX(row), spacer);
 
     char color_css[64];
     const auto& c = g_settings.aura_slots[i].color;
@@ -148,8 +210,9 @@ void RebuildAura(GtkWidget* box) {
     gtk_box_append(GTK_BOX(row), swatch);
 
     if (g_settings.aura_slots.size() > static_cast<size_t>(kMinAuraSlots)) {
-      GtkWidget* rem = gtk_button_new_with_label(
-          WideToUtf8(tr(lang_from_key(g_settings.language), StringId::kRemoveColorSlot)).c_str());
+      const std::string rem_label =
+          WideToUtf8(tr(lang_from_key(g_settings.language), StringId::kRemoveColorSlot));
+      GtkWidget* rem = MakeIconButton("img/icon_trash.svg", "user-trash-symbolic", rem_label);
       auto* rctx = new SlotCtx{i, box};
       g_signal_connect(rem, "clicked", G_CALLBACK(OnRemoveSlot), rctx);
       gtk_box_append(GTK_BOX(row), rem);
@@ -159,8 +222,9 @@ void RebuildAura(GtkWidget* box) {
   }
 
   if (static_cast<int>(g_settings.aura_slots.size()) < kMaxAuraSlots) {
-    GtkWidget* add = gtk_button_new_with_label(
-        WideToUtf8(tr(lang_from_key(g_settings.language), StringId::kAddColorSlot)).c_str());
+    const std::string add_label =
+        WideToUtf8(tr(lang_from_key(g_settings.language), StringId::kAddColorSlot));
+    GtkWidget* add = MakeLabeledIconButton("img/icon_add.svg", "list-add-symbolic", add_label);
     g_signal_connect(add, "clicked", G_CALLBACK(OnAddSlot), box);
     gtk_box_append(GTK_BOX(box), add);
   }

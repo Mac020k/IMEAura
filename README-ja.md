@@ -22,9 +22,11 @@
 - クリック透過の端オーバーレイ (常に最前面)
 - マルチモニタ追従 (アクティブウィンドウ; ホバー時のみの場合はカーソル)
 - 言語ごとの端の色 (最大7スロット; Phase 1: ja / zh-Hans / zh-Hant / ko / en); グラデーション幅 1–100 px
-- 表示モード: 常に表示 / 入力中のみ / 非表示 (+ 任意のホバー表示)
+- 表示モード: 常に表示 / 入力中のみ (+ 任意のホバー表示); Aura の有効/無効トグル
 - タブ付き設定 (Aura / Firefly / 一般) — UI は日本語・英語・簡体/繁体中国語・韓国語
 - 一般タブの言語ピッカーページ; Aura の色行は言語ドロップダウン
+- Aura 色の追加 (プラス) / 削除 (ゴミ箱) と言語ピッカーの戻る (シェブロン) は SVG アイコンで示し、OS が対応する場合はローカライズ済みラベル / ツールチップも付与
+- Windows カラーピッカー: RGB/HSB 切替、HEX・数値のテキスト入力、既定色プリセット
 - 将来の IME 言語候補: [docs/ime-languages.md](docs/ime-languages.md)
 - トレイ / メニューバーアイコン — 設定を閉じてもウィンドウは隠れるだけでアプリは継続動作
 - **Firefly**: CapsLock を Available / Busy (おやすみモード) に割当 — LED + 通知抑制 (Windows / macOS / Linux/X11)
@@ -113,7 +115,8 @@ JSON として保存されます (`src/core/settings.{h,cpp}`):
 | --- | --- | --- |
 | `aura_colors` | `[{"lang":"ja\|zh-Hans\|zh-Hant\|ko\|en","color":[r,g,b,a]}, …]` (2–7) | ja + en 既定 |
 | `color_jp` / `color_en` | `[r,g,b,a]` 0–255 | 互換用に保存; 優先は `aura_colors` |
-| `display_mode` | `always` \| `on_focus` \| `hidden` | `always` |
+| `aura_enabled` | bool | `true` |
+| `display_mode` | `always` \| `on_focus` | `always` |
 | `show_on_hover` | bool (`on_focus` 時のみ) | `false` |
 | `ui_font_size` | `small` \| `medium` \| `large` | `medium` |
 | `gradient_width` | 1–100 | `15` |
