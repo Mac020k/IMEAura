@@ -248,6 +248,9 @@ bool load_settings(Settings& out) {
   if (const auto* v = root.find("language")) {
     if (v->type == json::Value::Type::String) s.language = v->string_value;
   }
+  if (const auto* v = root.find("easy_quit")) {
+    if (v->type == json::Value::Type::Bool) s.easy_quit = v->bool_value;
+  }
   out = normalize_settings(s);
   return true;
 }
@@ -284,6 +287,7 @@ bool save_settings(const Settings& settings) {
       {"firefly_led_mode", json::Value::make_string(s.firefly_led_mode)},
       {"firefly_caps_mode", json::Value::make_string(s.firefly_caps_mode)},
       {"language", json::Value::make_string(s.language)},
+      {"easy_quit", json::Value::make_bool(s.easy_quit)},
   });
   std::ofstream f(settings_path());
   if (!f) return false;

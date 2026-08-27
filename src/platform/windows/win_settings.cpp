@@ -64,6 +64,7 @@ enum class Hit : int {
   FontLarge,
   LangChange,
   LangBack,
+  EasyQuitToggle,
   About,
   Quit,
   ScrollBar,
@@ -320,7 +321,11 @@ class SettingsUi {
         }
         break;
       case WM_CLOSE:
-        hide();
+        if (settings_.easy_quit) {
+          PostQuitMessage(0);
+        } else {
+          hide();
+        }
         return 0;
       case WM_DESTROY:
         hwnd_ = nullptr;
@@ -886,6 +891,8 @@ class SettingsUi {
       draw_text(rt_.Get(), body_fmt.Get(), lang_btn, r2f(lang_change_), C(kUiText), AlignH::Center, AlignV::Center,
                 false);
       paint_rule(lang_rule_);
+      easy_quit_ = box(m, gy, inner, row);
+      paint_toggle_row(easy_quit_, settings_.easy_quit, tr(lang(), StringId::kEasyQuit), body_fmt.Get());
     }
 
     paint_rule(rule4_);
@@ -1707,6 +1714,8 @@ class SettingsUi {
       }
       lang_rule_ = box(x0, y, w0, 1);
       y += sec;
+      easy_quit_ = box(x0, y, w0, row);
+      y += row + sec;
       rule4_ = box(x0, y, w0, 1);
       y += sec;
       about_ = box(x0, y, w0, row);
@@ -1784,6 +1793,7 @@ class SettingsUi {
       if (contains_circle(font_medium_, x, cy)) return Hit::FontMedium;
       if (contains_circle(font_large_, x, cy)) return Hit::FontLarge;
       if (contains(lang_change_, x, cy)) return Hit::LangChange;
+      if (contains(easy_quit_, x, cy)) return Hit::EasyQuitToggle;
       if (contains(about_, x, cy)) return Hit::About;
       if (contains(quit_, x, cy)) return Hit::Quit;
     }
@@ -2020,8 +2030,13 @@ class SettingsUi {
       case Hit::About:
         win_show_about_dialog(hwnd_);
         break;
+      case Hit::EasyQuitToggle:
+        settings_.easy_quit = !settings_.easy_quit;
+        emit();
+        break;
       case Hit::Quit:
-        if (MessageBoxW(hwnd_, tr(lang(), StringId::kQuitConfirmBody), tr(lang(), StringId::kQuitConfirmTitle),
+        if (settings_.easy_quit ||
+            MessageBoxW(hwnd_, tr(lang(), StringId::kQuitConfirmBody), tr(lang(), StringId::kQuitConfirmTitle),
                         MB_YESNO | MB_ICONWARNING) == IDYES) {
           PostQuitMessage(0);
         }
@@ -2091,7 +2106,7 @@ class SettingsUi {
   RECT rule1_{}, sec_width_title_{}, sec_width_sub_{}, width_track_{}, width_value_{}, reset_width_{};
   RECT rule2_{}, sec_disp_title_{}, mode_always_{}, mode_focus_{}, hover_box_{};
   RECT rule3_{}, sec_font_title_{}, sec_font_sub_{}, font_bar_{}, font_small_{}, font_medium_{}, font_large_{};
-  RECT rule4_{}, about_{}, quit_{}, scroll_bar_{};
+  RECT rule4_{}, about_{}, quit_{}, easy_quit_{}, scroll_bar_{};
 
   Tab active_tab_ = Tab::Aura;
   Page page_ = Page::Main;

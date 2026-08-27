@@ -42,6 +42,8 @@ struct Settings {
   std::string firefly_led_mode = kFireflyLedAuto;
   std::string firefly_caps_mode = kFireflyCapsUppercase;
   std::string language = kLangJa;
+  // Debug: skip quit confirmation dialogs when true.
+  bool easy_quit = false;
 
   Rgba color_for_lang(std::string_view lang_id) const;
   Rgba default_color_for_new_slot(size_t existing_count) const;

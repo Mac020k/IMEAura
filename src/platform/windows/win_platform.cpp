@@ -484,10 +484,12 @@ LRESULT CALLBACK WinPlatformBackend::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPA
       }
       return 0;
     case WM_CLOSE: {
-      const auto l = lang_from_key(self->settings_.language);
-      if (MessageBoxW(hwnd, tr(l, StringId::kQuitConfirmBody), tr(l, StringId::kQuitConfirmTitle),
-                      MB_YESNO | MB_ICONWARNING) != IDYES) {
-        return 0;
+      if (!self->settings_.easy_quit) {
+        const auto l = lang_from_key(self->settings_.language);
+        if (MessageBoxW(hwnd, tr(l, StringId::kQuitConfirmBody), tr(l, StringId::kQuitConfirmTitle),
+                        MB_YESNO | MB_ICONWARNING) != IDYES) {
+          return 0;
+        }
       }
       self->running_ = false;
       PostQuitMessage(0);

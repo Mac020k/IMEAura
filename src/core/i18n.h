@@ -44,6 +44,7 @@ enum class StringId {
   kLangZhHans,
   kLangZhHant,
   kLangKo,
+  kEasyQuit,
   kAbout,
   kQuit,
   kQuitConfirmTitle,
