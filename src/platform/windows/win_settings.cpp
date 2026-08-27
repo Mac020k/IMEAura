@@ -281,6 +281,10 @@ class SettingsUi {
         }
         return 0;
       case WM_KEYDOWN:
+        if (wp == VK_TAB && (GetKeyState(VK_CONTROL) & 0x8000)) {
+          cycle_tab((GetKeyState(VK_SHIFT) & 0x8000) == 0);
+          return 0;
+        }
         if (width_editing_) {
           if (wp == VK_BACK && !width_edit_buf_.empty()) {
             width_edit_buf_.pop_back();
@@ -592,6 +596,35 @@ class SettingsUi {
     if (active_tab_ == Tab::Firefly) return tab_firefly_;
     if (active_tab_ == Tab::General) return tab_general_;
     return tab_aura_;
+  }
+
+  static int tab_index(Tab tab) {
+    if (tab == Tab::Firefly) return 1;
+    if (tab == Tab::General) return 2;
+    return 0;
+  }
+
+  RECT tab_rect(Tab tab) const {
+    if (tab == Tab::Firefly) return tab_firefly_;
+    if (tab == Tab::General) return tab_general_;
+    return tab_aura_;
+  }
+
+  void activate_tab(Tab tab) {
+    if (page_ == Page::LangPicker) page_ = Page::Main;
+    if (active_tab_ != tab) {
+      start_tab_anim(active_tab_rect(), tab_rect(tab));
+      active_tab_ = tab;
+    }
+    scroll_y_ = tab_scroll_[tab_index(tab)];
+    InvalidateRect(hwnd_, nullptr, FALSE);
+  }
+
+  void cycle_tab(bool forward) {
+    static constexpr Tab kTabs[] = {Tab::Aura, Tab::Firefly, Tab::General};
+    int idx = tab_index(active_tab_);
+    idx = forward ? (idx + 1) % 3 : (idx + 2) % 3;
+    activate_tab(kTabs[idx]);
   }
 
   void start_tab_anim(const RECT& from, const RECT& to) {
@@ -1901,31 +1934,13 @@ class SettingsUi {
 
     switch (hover_) {
       case Hit::TabAura:
-        if (page_ == Page::LangPicker) page_ = Page::Main;
-        if (active_tab_ != Tab::Aura) {
-          start_tab_anim(active_tab_rect(), tab_aura_);
-          active_tab_ = Tab::Aura;
-        }
-        scroll_y_ = tab_scroll_[0];
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        activate_tab(Tab::Aura);
         break;
       case Hit::TabFirefly:
-        if (page_ == Page::LangPicker) page_ = Page::Main;
-        if (active_tab_ != Tab::Firefly) {
-          start_tab_anim(active_tab_rect(), tab_firefly_);
-          active_tab_ = Tab::Firefly;
-        }
-        scroll_y_ = tab_scroll_[1];
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        activate_tab(Tab::Firefly);
         break;
       case Hit::TabGeneral:
-        if (page_ == Page::LangPicker) page_ = Page::Main;
-        if (active_tab_ != Tab::General) {
-          start_tab_anim(active_tab_rect(), tab_general_);
-          active_tab_ = Tab::General;
-        }
-        scroll_y_ = tab_scroll_[2];
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        activate_tab(Tab::General);
         break;
       case Hit::FireflyToggle:
         settings_.firefly_enabled = !settings_.firefly_enabled;
