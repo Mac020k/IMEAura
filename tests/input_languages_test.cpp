@@ -32,5 +32,15 @@ int main() {
     assert(choices.front() == kInputJa);
   }
 
+  {
+    size_t n = 0;
+    input_language_catalog(n);
+    assert(n == 10);
+    assert(is_known_input_language(kInputVi));
+    assert(is_known_input_language(kInputTh));
+    assert(!is_ui_language(kInputVi));
+    assert(is_ui_language(kInputJa));
+  }
+
   return 0;
 }

@@ -36,7 +36,15 @@ int main() {
   out = evaluate_policy(s, in);
   EXPECT(out.target_color.r == kDefaultAuraSlotColors[0].r);
 
-  in.ime_lang = "vi";  // unmatched → en fallback
+  s.aura_slots.push_back({"vi", kDefaultAuraSlotColors[1]});
+  s = normalize_settings(s);
+  in.ime_lang = "vi";
+  out = evaluate_policy(s, in);
+  EXPECT(out.target_color.r == kDefaultAuraSlotColors[1].r);
+
+  in.ime_lang = "vi";  // unmatched slot → en fallback
+  s.aura_slots = default_settings().aura_slots;
+  s = normalize_settings(s);
   out = evaluate_policy(s, in);
   EXPECT(out.target_color.r == kDefaultColorEn.r);
 

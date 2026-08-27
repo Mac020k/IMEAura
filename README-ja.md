@@ -21,7 +21,7 @@
 - プラットフォーム API によるリアルタイム IME 状態検知
 - クリック透過の端オーバーレイ (常に最前面)
 - マルチモニタ追従 (アクティブウィンドウ; ホバー時のみの場合はカーソル)
-- 言語ごとの端の色 (最大7スロット; Phase 1: ja / zh-Hans / zh-Hant / ko / en); グラデーション幅 1–100 px
+- 言語ごとの端の色 (最大7スロット; Aura ID: ja / zh-Hans / zh-Hant / ko / en + vi / th / km / my / lo); グラデーション幅 1–100 px
 - 表示モード: 常に表示 / 入力中のみ (+ 任意のホバー表示); Aura の有効/無効トグル
 - タブ付き設定 (Aura / Firefly / 一般) — UI は日本語・英語・簡体/繁体中国語・韓国語
 - 一般タブの言語ピッカーページ; Aura の色行は言語ドロップダウン
@@ -113,7 +113,7 @@ JSON として保存されます (`src/core/settings.{h,cpp}`):
 
 | キー | 値 | 既定 |
 | --- | --- | --- |
-| `aura_colors` | `[{"lang":"ja\|zh-Hans\|zh-Hant\|ko\|en","color":[r,g,b,a]}, …]` (2–7) | ja + en 既定 |
+| `aura_colors` | `[{"lang":"ja\|zh-Hans\|zh-Hant\|ko\|en\|vi\|th\|km\|my\|lo","color":[r,g,b,a]}, …]` (2–7) | ja + en 既定 |
 | `color_jp` / `color_en` | `[r,g,b,a]` 0–255 | 互換用に保存; 優先は `aura_colors` |
 | `aura_enabled` | bool | `true` |
 | `display_mode` | `always` \| `on_focus` | `always` |

@@ -1,7 +1,6 @@
 # IME / input-language catalog
 
 Candidate languages for IME Aura color mapping and (separately) UI localization.
-**Phase 1 implements Must + Latin fallback (`en`) only.** Higher tiers are documented for future work.
 
 ## Phase 1 (implemented)
 
@@ -11,13 +10,13 @@ Candidate languages for IME Aura color mapping and (separately) UI localization.
 | `zh-Hans` | Chinese (Simplified) | Must — true IME + 中/英 |
 | `zh-Hant` | Chinese (Traditional) | Must — true IME + 中/英 (TW/HK) |
 | `ko` | Korean | Must — true IME + 가/A |
-| `en` | English / Latin / other | Fallback when active input is not a Must ID |
+| `en` | English / Latin / other | Fallback when active input is not a known Aura ID |
 
-Aura settings allow up to **7** color slots. Phase 1 dropdown candidates are the five IDs above.
+Aura settings allow up to **7** color slots. Aura dropdown candidates: Phase 1 IDs plus Southeast Asia (below).
 
-UI language keys (settings `language`): `ja` | `en` | `zh-Hans` | `zh-Hant` | `ko`.
+UI language keys (settings `language`): `ja` | `en` | `zh-Hans` | `zh-Hant` | `ko` only.
 
-## High value — Southeast Asia (future)
+## Southeast Asia (implemented for Aura)
 
 | ID | Language | Notes |
 | --- | --- | --- |
@@ -26,6 +25,8 @@ UI language keys (settings `language`): `ja` | `en` | `zh-Hans` | `zh-Hant` | `k
 | `km` | Khmer | Layout switch |
 | `my` | Myanmar (Burmese) | Layout switch |
 | `lo` | Lao | Layout switch |
+
+Detection: Windows keyboard layout LANGID; macOS TIS input source languages / ID; Linux ibus / fcitx engine heuristics.
 
 ## Skip (low IME-Aura fit)
 

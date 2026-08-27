@@ -12,6 +12,11 @@ inline constexpr const char* kInputEn = "en";
 inline constexpr const char* kInputZhHans = "zh-Hans";
 inline constexpr const char* kInputZhHant = "zh-Hant";
 inline constexpr const char* kInputKo = "ko";
+inline constexpr const char* kInputVi = "vi";
+inline constexpr const char* kInputTh = "th";
+inline constexpr const char* kInputKm = "km";
+inline constexpr const char* kInputMy = "my";
+inline constexpr const char* kInputLo = "lo";
 
 inline constexpr int kMaxAuraSlots = 7;
 inline constexpr int kMinAuraSlots = 2;
@@ -23,6 +28,7 @@ struct InputLanguageInfo {
 };
 
 const InputLanguageInfo* input_language_catalog(size_t& count);
+const InputLanguageInfo* ui_language_catalog(size_t& count);
 bool is_known_input_language(std::string_view id);
 bool is_ui_language(std::string_view id);
 std::string normalize_input_language(std::string_view id);

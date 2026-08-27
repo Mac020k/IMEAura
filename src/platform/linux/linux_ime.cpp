@@ -41,6 +41,15 @@ std::string MapEngine(const std::string& engine) {
       e.find("rime") != std::string::npos || e.find("zh-hans") != std::string::npos ||
       e.find("chinese") != std::string::npos || e.find("libpinyin") != std::string::npos)
     return kInputZhHans;
+  if (e.find("vietnamese") != std::string::npos || e.find("telex") != std::string::npos ||
+      e.find("vni") != std::string::npos || e.find("unikey") != std::string::npos || e.find(":vi") != std::string::npos)
+    return kInputVi;
+  if (e.find("thai") != std::string::npos || e.find(":th") != std::string::npos) return kInputTh;
+  if (e.find("khmer") != std::string::npos || e.find(":km") != std::string::npos) return kInputKm;
+  if (e.find("burmese") != std::string::npos || e.find("myanmar") != std::string::npos ||
+      e.find(":my") != std::string::npos)
+    return kInputMy;
+  if (e.find("lao") != std::string::npos || e.find(":lo") != std::string::npos) return kInputLo;
   return kInputEn;
 }
 

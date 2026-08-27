@@ -71,6 +71,11 @@ HWND ForegroundFocusHwnd() {
   return FocusHwnd(fg);
 }
 
+// Khmer / Lao / Burmese PRIMARYLANGID values (0x53–0x55). Some Windows SDK headers omit LANG_* macros.
+constexpr WORD kPrimaryLangKhmer = 0x53;
+constexpr WORD kPrimaryLangLao = 0x54;
+constexpr WORD kPrimaryLangBurmese = 0x55;
+
 std::string LangFromLangId(LANGID langid) {
   const WORD primary = PRIMARYLANGID(langid);
   const WORD sub = SUBLANGID(langid);
@@ -80,6 +85,11 @@ std::string LangFromLangId(LANGID langid) {
     if (sub == SUBLANG_CHINESE_SIMPLIFIED || sub == SUBLANG_CHINESE_SINGAPORE) return kInputZhHans;
     return kInputZhHant;
   }
+  if (primary == LANG_VIETNAMESE) return kInputVi;
+  if (primary == LANG_THAI) return kInputTh;
+  if (primary == kPrimaryLangKhmer) return kInputKm;
+  if (primary == kPrimaryLangBurmese) return kInputMy;
+  if (primary == kPrimaryLangLao) return kInputLo;
   return kInputEn;
 }
 

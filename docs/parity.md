@@ -13,7 +13,7 @@ Native implementation: C++20 in `src/`.
 ## Functional checklist
 
 - [x] Launch shows edge gradient and control window
-- [x] Per-language Aura colors (2–7 slots; Phase 1: ja / zh-Hans / zh-Hant / ko / en) including alpha; reset to defaults
+- [x] Per-language Aura colors (2–7 slots; ja / zh-Hans / zh-Hant / ko / en / vi / th / km / my / lo) including alpha; reset to defaults
 - [x] Gradient width 1–100 px (default 15)
 - [x] Display modes: Always / Only while typing (+ optional hover); Aura enable toggle
 - [x] “Also show when hovering a text box” (only with Only while typing)
@@ -87,7 +87,7 @@ Probe JSON includes `ime_lang` and legacy `ime_japanese`.
 
 1. Set known colors and width in `settings.json` (or via Aura slots).
 2. Launch app → observe edges on multiple monitors and display modes.
-3. Switch OS IME among ja / zh / ko / Latin → Aura color follows mapped slots.
+3. Switch OS IME among ja / zh / ko / vi / th / SEA layouts / Latin → Aura color follows mapped slots.
 4. General → Change language → pick zh-Hans / ko etc. → UI strings update.
 5. Add up to 7 color slots; confirm add-slot default colors `#16CC7B`…`#636363`.
 6. Verify Firefly still skips Caps remap while Japanese IME is active (`*_is_japanese_input`).

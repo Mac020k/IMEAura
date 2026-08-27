@@ -788,7 +788,7 @@ class SettingsUi {
       draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kLangSection), r2f(lang_picker_title_), C(kUiText),
                 AlignH::Left, AlignV::Center);
       size_t n = 0;
-      const auto* cat = input_language_catalog(n);
+      const auto* cat = ui_language_catalog(n);
       for (size_t i = 0; i < n && i < lang_pick_rows_.size(); ++i) {
         const bool on = settings_.language == cat[i].id;
         paint_radio(lang_pick_rows_[i], on, tr(lang(), string_id_for_ui_lang(cat[i].id)), body_fmt.Get());
@@ -1586,7 +1586,7 @@ class SettingsUi {
       lang_picker_title_ = box(title_x, y, std::max(0, x0 + w0 - title_x), header_h);
       y += header_h + sec;
       size_t n = 0;
-      const auto* cat = input_language_catalog(n);
+      const auto* cat = ui_language_catalog(n);
       for (size_t i = 0; i < n; ++i) {
         const int rh =
             std::max(row, wrapped(body_fmt, tr(lang(), string_id_for_ui_lang(cat[i].id)), w1) + dip(kUiButtonPadY));
@@ -2075,7 +2075,7 @@ class SettingsUi {
         } else if (hv >= static_cast<int>(Hit::LangPick0) &&
                    hv < static_cast<int>(Hit::LangPick0) + 16) {
           size_t n = 0;
-          const auto* cat = input_language_catalog(n);
+          const auto* cat = ui_language_catalog(n);
           const size_t i = static_cast<size_t>(hv - static_cast<int>(Hit::LangPick0));
           if (i < n) {
             settings_.language = cat[i].id;

@@ -104,7 +104,7 @@ void RebuildAura(GtkWidget* box);
 void OnLangChanged(GtkDropDown* drop, GParamSpec*, gpointer) {
   const guint idx = gtk_drop_down_get_selected(drop);
   size_t n = 0;
-  const auto* cat = input_language_catalog(n);
+  const auto* cat = ui_language_catalog(n);
   if (idx < n) {
     g_settings.language = cat[idx].id;
     Emit();
@@ -265,7 +265,7 @@ void BuildWindow() {
   gtk_widget_set_margin_start(gen, 12);
   gtk_box_append(GTK_BOX(gen), gtk_label_new("Language"));
   size_t n = 0;
-  const auto* cat = input_language_catalog(n);
+  const auto* cat = ui_language_catalog(n);
   std::vector<std::string> owned;
   for (size_t i = 0; i < n; ++i) {
     owned.push_back(WideToUtf8(cat[i].native_name));
@@ -284,7 +284,7 @@ void SyncUi() {
   gtk_switch_set_active(GTK_SWITCH(g_firefly_switch), g_settings.firefly_enabled);
   gtk_label_set_text(GTK_LABEL(g_firefly_status), g_firefly_active ? "Busy" : "Available");
   size_t n = 0;
-  const auto* cat = input_language_catalog(n);
+  const auto* cat = ui_language_catalog(n);
   for (guint i = 0; i < n; ++i) {
     if (g_settings.language == cat[i].id) {
       gtk_drop_down_set_selected(GTK_DROP_DOWN(g_lang_drop), i);

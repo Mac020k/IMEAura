@@ -151,7 +151,7 @@ NSImage* LoadUiIcon(const char* relative, NSString* accessibilityLabel) {
   langLabel.frame = NSMakeRect(12, 150, 200, 20);
   self.langButton = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(12, 120, 240, 28) pullsDown:NO];
   size_t n = 0;
-  const auto* cat = imeaura::input_language_catalog(n);
+  const auto* cat = imeaura::ui_language_catalog(n);
   for (size_t i = 0; i < n; ++i) {
     [self.langButton addItemWithTitle:WtoNS(cat[i].native_name)];
     self.langButton.lastItem.representedObject = [NSString stringWithUTF8String:cat[i].id];

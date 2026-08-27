@@ -26,6 +26,11 @@ std::string MapFromLanguages(CFStringRef langs) {
       s.find("zh_HK") != std::string::npos)
     return kInputZhHant;
   if (s.find("zh") != std::string::npos) return kInputZhHans;
+  if (s.find("vi") != std::string::npos) return kInputVi;
+  if (s.find("th") != std::string::npos) return kInputTh;
+  if (s.find("km") != std::string::npos) return kInputKm;
+  if (s.find("my") != std::string::npos) return kInputMy;
+  if (s.find("lo") != std::string::npos) return kInputLo;
   return kInputEn;
 }
 
@@ -46,6 +51,15 @@ std::string MapFromSourceId(const std::string& id) {
       lower.find("cangjie") != std::string::npos || lower.find("zh-hant") != std::string::npos)
     return kInputZhHant;
   if (lower.find("chinese") != std::string::npos || lower.find("zh.") != std::string::npos) return kInputZhHans;
+  if (lower.find("vietnamese") != std::string::npos || lower.find("telex") != std::string::npos ||
+      lower.find("vni") != std::string::npos || lower.find(".vi") != std::string::npos)
+    return kInputVi;
+  if (lower.find("thai") != std::string::npos || lower.find(".th") != std::string::npos) return kInputTh;
+  if (lower.find("khmer") != std::string::npos || lower.find(".km") != std::string::npos) return kInputKm;
+  if (lower.find("burmese") != std::string::npos || lower.find("myanmar") != std::string::npos ||
+      lower.find(".my") != std::string::npos)
+    return kInputMy;
+  if (lower.find("lao") != std::string::npos || lower.find(".lo") != std::string::npos) return kInputLo;
   return kInputEn;
 }
 
