@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none"
+     stroke="#1C1C1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- General settings gear -->
+  <circle cx="12" cy="12" r="3"/>
+  <path d="M12 4V8.5"/>
+  <path d="M12 15.5V20"/>
+  <path d="M4.5 12H7.5"/>
+  <path d="M16.5 12H19.5"/>
+  <path d="M6.8 6.8L8.9 8.9"/>
+  <path d="M15.1 15.1L17.2 17.2"/>
+  <path d="M6.8 17.2L8.9 15.1"/>
+  <path d="M15.1 8.9L17.2 6.8"/>
+</svg>

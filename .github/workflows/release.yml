@@ -102,7 +102,7 @@ jobs:
           merge-multiple: true
 
       - id: release
-        run: echo "tag=v${APP_VERSION}.build.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+        run: echo "tag=v${APP_VERSION}.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
 
       - uses: softprops/action-gh-release@v2
         with:

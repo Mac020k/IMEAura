@@ -49,7 +49,9 @@ inline constexpr int kUiButtonPadX = 14;
 inline constexpr int kUiHitMin = 32;
 inline constexpr int kUiSwatchW = 104;
 inline constexpr int kUiSwatchH = 32;
-inline constexpr int kUiMinWindowW = 300;
+// Body layout floor (Aura color row). Tab bar often needs more; see min_client_width_dip().
+inline constexpr int kUiMinWindowW = 360;
+inline constexpr int kUiDefaultWindowW = 520;
 inline constexpr int kUiMinWindowH = 300;
 inline constexpr int kUiScrollBarWidth = 10;
 inline constexpr int kUiScrollBarMarginY = 8;

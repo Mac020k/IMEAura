@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -136,8 +137,8 @@ class SettingsUi {
 
     constexpr DWORD kWndStyle = WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX;
     const int sys_dpi = static_cast<int>(GetDpiForSystem());
-    const int scaled_w = MulDiv(kUiMinWindowW, sys_dpi, 96);
-    const int scaled_h = MulDiv(300, sys_dpi, 96);
+    const int scaled_w = MulDiv(kUiDefaultWindowW, sys_dpi, 96);
+    const int scaled_h = MulDiv(kUiMinWindowH, sys_dpi, 96);
     RECT desired{0, 0, scaled_w, scaled_h};
     AdjustWindowRectExForDpi(&desired, kWndStyle, FALSE, 0, static_cast<UINT>(sys_dpi));
     const int w = desired.right - desired.left;
@@ -207,7 +208,9 @@ class SettingsUi {
       auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
       int min_dpi = static_cast<int>(GetDpiForWindow(hwnd));
       if (min_dpi == 0) min_dpi = static_cast<int>(GetDpiForSystem());
-      RECT min_rc{0, 0, MulDiv(kUiMinWindowW, min_dpi, 96), MulDiv(kUiMinWindowH, min_dpi, 96)};
+      SettingsUi* self = reinterpret_cast<SettingsUi*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+      const int min_client_w = self ? self->min_client_width_dip() : kUiMinWindowW;
+      RECT min_rc{0, 0, MulDiv(min_client_w, min_dpi, 96), MulDiv(kUiMinWindowH, min_dpi, 96)};
       AdjustWindowRectExForDpi(&min_rc, WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX, FALSE, 0, static_cast<UINT>(min_dpi));
       mmi->ptMinTrackSize.x = min_rc.right - min_rc.left;
       mmi->ptMinTrackSize.y = min_rc.bottom - min_rc.top;
@@ -364,7 +367,10 @@ class SettingsUi {
     return true;
   }
 
-  void release_target() { rt_.Reset(); }
+  void release_target() {
+    tab_icon_round_stroke_.Reset();
+    rt_.Reset();
+  }
 
   ComPtr<IDWriteTextFormat> make_format(int pt, DWRITE_FONT_WEIGHT weight) {
     ComPtr<IDWriteTextFormat> fmt;
@@ -404,6 +410,59 @@ class SettingsUi {
 
   int text_width(IDWriteTextFormat* fmt, const wchar_t* text) const {
     return std::max(1, static_cast<int>(std::ceil(measure_text(fmt, text).widthIncludingTrailingWhitespace)));
+  }
+
+  ComPtr<IDWriteTextFormat> make_lang_format(int pt, DWRITE_FONT_WEIGHT weight) const {
+    ComPtr<IDWriteTextFormat> fmt;
+    if (!dwrite_) return fmt;
+    const float px = static_cast<float>(MulDiv(pt, 96, 72));
+    const wchar_t* family = lang_font_family(lang());
+    if (FAILED(dwrite_->CreateTextFormat(family, nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
+                                         DWRITE_FONT_STRETCH_NORMAL, px, L"en-us",
+                                         fmt.GetAddressOf())) ||
+        !fmt) {
+      dwrite_->CreateTextFormat(L"Segoe UI", nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
+                                DWRITE_FONT_STRETCH_NORMAL, px, L"en-us", fmt.GetAddressOf());
+    }
+    return fmt;
+  }
+
+  // Tab bar: icon + gap + label per cell, centered in each third of the client width.
+  int min_client_width_dip() {
+    ensure_factories();
+    const int body = ui_font_point_size(settings_.ui_font_size);
+    auto body_fmt = make_lang_format(body, DWRITE_FONT_WEIGHT_NORMAL);
+    if (!body_fmt) return kUiMinWindowW;
+    const int gap = dip(6);
+    const int body_h = text_height(body_fmt.Get());
+    const StringId tab_ids[] = {StringId::kTabAura, StringId::kTabFirefly, StringId::kTabGeneral};
+    int max_cell = 0;
+    for (StringId id : tab_ids) {
+      const int label_w = text_width(body_fmt.Get(), tr(lang(), id));
+      max_cell = std::max(max_cell, body_h + gap + label_w);
+    }
+    // kUiTabPadX matches the tab indicator inset; extra margin keeps icon glow off neighbors.
+    const int glow = static_cast<int>(std::ceil(body_h * 0.5f)) + dip(4);
+    const int tab_min = max_cell + dip(kUiTabPadX) * 2 + glow;
+    const int tab_bar_min = tab_min * 3;
+    // Aura color row: language dropdown + swatch + remove button.
+    const int body_min = dip(kUiMargin) * 2 + dip(kUiIndent) + dip(140) + dip(kUiRowGap) +
+                         dip(kUiSwatchW) + dip(4) + dip(22);
+    return std::max({tab_bar_min, body_min, kUiMinWindowW});
+  }
+
+  void enforce_min_client_width() {
+    if (!hwnd_) return;
+    const int min_dip = min_client_width_dip();
+    RECT min_rc{0, 0, MulDiv(min_dip, dpi_, 96), 0};
+    AdjustWindowRectExForDpi(&min_rc, GetWindowStyle(hwnd_), FALSE, GetWindowExStyle(hwnd_),
+                             static_cast<UINT>(dpi_));
+    const int min_frame_w = min_rc.right - min_rc.left;
+    RECT wr{};
+    GetWindowRect(hwnd_, &wr);
+    if ((wr.right - wr.left) >= min_frame_w) return;
+    SetWindowPos(hwnd_, nullptr, 0, 0, min_frame_w, wr.bottom - wr.top,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
   }
 
   UiMetrics make_metrics(IDWriteTextFormat* title_fmt, IDWriteTextFormat* body_fmt, IDWriteTextFormat* sub_fmt) {
@@ -481,7 +540,15 @@ class SettingsUi {
     scroll_y_ = std::clamp(scroll_y_, 0, scroll_max_);
   }
 
-  int tab_bar_h() const { return page_ == Page::LangPicker ? 0 : dip(kUiTabBarHeight); }
+  void update_tab_bar_h(const UiMetrics& um) {
+    tab_bar_h_cached_ =
+        (page_ == Page::LangPicker) ? 0 : std::max(dip(kUiTabBarHeight), um.row_h);
+  }
+
+  int tab_bar_h() const {
+    if (page_ == Page::LangPicker) return 0;
+    return tab_bar_h_cached_ > 0 ? tab_bar_h_cached_ : dip(kUiTabBarHeight);
+  }
 
   void scroll_by(int delta) {
     if (scroll_max_ <= 0) return;
@@ -602,6 +669,7 @@ class SettingsUi {
     auto body_fmt = make_format(body, DWRITE_FONT_WEIGHT_NORMAL);
     auto sub_fmt = make_format(std::max(body - 2, 10), DWRITE_FONT_WEIGHT_NORMAL);
     const UiMetrics um = make_metrics(title_fmt.Get(), body_fmt.Get(), sub_fmt.Get());
+    update_tab_bar_h(um);
     layout(um, body_fmt.Get(), sub_fmt.Get());
     clamp_scroll();
     layout(um, body_fmt.Get(), sub_fmt.Get());
@@ -638,6 +706,7 @@ class SettingsUi {
         tr(lang(), StringId::kTabFirefly),
         tr(lang(), StringId::kTabGeneral)
       };
+      const bool tab_enabled[] = {settings_.aura_enabled, settings_.firefly_enabled, false};
       const RECT* tab_rects[] = { &tab_aura_, &tab_firefly_, &tab_general_ };
       const Tab tabs[] = { Tab::Aura, Tab::Firefly, Tab::General };
       const int tab_w = static_cast<int>(w) / 3;
@@ -647,9 +716,8 @@ class SettingsUi {
         const_cast<RECT*>(tab_rects[i])->top = 0;
         const_cast<RECT*>(tab_rects[i])->bottom = tab_h;
         const bool active = (active_tab_ == tabs[i]);
-        draw_text(rt_.Get(), body_fmt.Get(), tab_labels[i], r2f(*tab_rects[i]),
-                  active ? C(kUiTabActive) : C(kUiTextSecondary), AlignH::Center, AlignV::Center);
-        (void)active;
+        paint_tab_cell(*tab_rects[i], tab_labels[i], body_fmt.Get(), active, tab_enabled[i], tabs[i],
+                       um.body_h);
       }
       {
         const float ind_y = tab_y - static_cast<float>(dip(kUiTabIndicatorH));
@@ -799,13 +867,12 @@ class SettingsUi {
     // Language section
     {
       const int m = dip(kUiMargin);
-      const int ind = dip(kUiIndent);
       const int inner = content_width();
       const int row = um.row_h;
       int gy = rule3_.top + dip(kUiSectionGap);
       RECT lang_title = box(m, gy, inner, um.title_h);
       gy += um.title_h + dip(kUiRowGap);
-      lang_change_ = box(m + ind, gy, std::max(1, inner - ind), row);
+      lang_change_ = box(m, gy, inner, row);
       gy += row + dip(kUiSectionGap);
       lang_rule_ = box(m, gy, inner, 1);
       gy += dip(kUiSectionGap);
@@ -933,6 +1000,234 @@ class SettingsUi {
     const float stroke = std::max(1.5f, size * 0.085f);
     rt_->DrawLine(P(12.f, 5.f), P(12.f, 19.f), brush.Get(), stroke);
     rt_->DrawLine(P(5.f, 12.f), P(19.f, 12.f), brush.Get(), stroke);
+  }
+
+  // Icons match img/icon_tab_aura.svg, img/icon_tab_firefly.svg, img/icon_tab_general.svg (24x24 viewBox).
+  void draw_icon_stroke(float stroke, const D2D1_COLOR_F& color,
+                        const std::function<void(ID2D1GeometrySink*)>& build) {
+    ComPtr<ID2D1SolidColorBrush> brush;
+    rt_->CreateSolidColorBrush(color, brush.GetAddressOf());
+    if (!brush) return;
+    ID2D1Factory* fac = nullptr;
+    rt_->GetFactory(&fac);
+    if (!fac) return;
+    ComPtr<ID2D1PathGeometry> geo;
+    if (FAILED(fac->CreatePathGeometry(geo.GetAddressOf())) || !geo) return;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(geo->Open(sink.GetAddressOf())) || !sink) return;
+    build(sink.Get());
+    sink->Close();
+    rt_->DrawGeometry(geo.Get(), brush.Get(), stroke);
+  }
+
+  void draw_icon_tab_aura(float cx, float cy, float size, const D2D1_COLOR_F& color) {
+    const float s = size / 24.f;
+    auto P = [&](float x, float y) { return D2D1::Point2F(cx + (x - 12.f) * s, cy + (y - 12.f) * s); };
+    const float stroke = std::max(1.f, size * (1.5f / 24.f));
+    draw_icon_stroke(stroke, color, [&](ID2D1GeometrySink* sink) {
+      sink->BeginFigure(P(3.3f, 20.f), D2D1_FIGURE_BEGIN_HOLLOW);
+      sink->AddLine(P(3.3f, 9.f));
+      sink->AddBezier(D2D1::BezierSegment(P(3.3f, 6.2f), P(5.5f, 4.f), P(8.3f, 4.f)));
+      sink->AddLine(P(19.3f, 4.f));
+      sink->EndFigure(D2D1_FIGURE_END_OPEN);
+      sink->BeginFigure(P(7.f, 20.f), D2D1_FIGURE_BEGIN_HOLLOW);
+      sink->AddLine(P(7.f, 11.f));
+      sink->AddBezier(D2D1::BezierSegment(P(7.f, 8.7f), P(8.7f, 8.f), P(10.f, 8.f)));
+      sink->AddLine(P(17.f, 8.f));
+      sink->EndFigure(D2D1_FIGURE_END_OPEN);
+    });
+  }
+
+  void draw_icon_tab_firefly(float cx, float cy, float size, const D2D1_COLOR_F& color) {
+    ComPtr<ID2D1SolidColorBrush> brush;
+    rt_->CreateSolidColorBrush(color, brush.GetAddressOf());
+    if (!brush) return;
+    // img/icon_tab_firefly.svg uses viewBox 0 0 24 20 (center 12, 10).
+    const float s = size / 24.f;
+    auto P = [&](float x, float y) { return D2D1::Point2F(cx + (x - 12.f) * s, cy + (y - 10.f) * s); };
+    const float stroke = std::max(1.25f, size * (2.f / 24.f));
+    draw_icon_stroke(stroke, color, [&](ID2D1GeometrySink* sink) {
+      sink->BeginFigure(P(10.f, 11.f), D2D1_FIGURE_BEGIN_HOLLOW);
+      sink->AddBezier(D2D1::BezierSegment(P(4.5f, 13.f), P(4.5f, 19.f), P(10.f, 17.f)));
+      sink->EndFigure(D2D1_FIGURE_END_OPEN);
+      sink->BeginFigure(P(14.f, 11.f), D2D1_FIGURE_BEGIN_HOLLOW);
+      sink->AddBezier(D2D1::BezierSegment(P(19.5f, 13.f), P(19.5f, 19.f), P(14.f, 17.f)));
+      sink->EndFigure(D2D1_FIGURE_END_OPEN);
+    });
+    rt_->DrawLine(P(12.f, 8.5f), P(12.f, 17.5f), brush.Get(), stroke);
+    rt_->DrawLine(P(12.f, 4.5f), P(12.f, 3.f), brush.Get(), stroke);
+    const float head_r = std::max(1.f, 1.75f * s);
+    rt_->DrawEllipse(D2D1::Ellipse(P(12.f, 6.5f), head_r, head_r), brush.Get(), stroke);
+  }
+
+  void draw_icon_tab_general(float cx, float cy, float size, const D2D1_COLOR_F& color) {
+    ComPtr<ID2D1SolidColorBrush> brush;
+    rt_->CreateSolidColorBrush(color, brush.GetAddressOf());
+    if (!brush) return;
+    const float s = size / 24.f;
+    auto P = [&](float x, float y) { return D2D1::Point2F(cx + (x - 12.f) * s, cy + (y - 12.f) * s); };
+    const float stroke = std::max(1.25f, size * (2.f / 24.f));
+    const float hub_r = std::max(1.f, 3.f * s);
+    rt_->DrawEllipse(D2D1::Ellipse(P(12.f, 12.f), hub_r, hub_r), brush.Get(), stroke);
+    rt_->DrawLine(P(12.f, 4.f), P(12.f, 8.5f), brush.Get(), stroke);
+    rt_->DrawLine(P(12.f, 15.5f), P(12.f, 20.f), brush.Get(), stroke);
+    rt_->DrawLine(P(4.5f, 12.f), P(7.5f, 12.f), brush.Get(), stroke);
+    rt_->DrawLine(P(16.5f, 12.f), P(19.5f, 12.f), brush.Get(), stroke);
+    rt_->DrawLine(P(6.8f, 6.8f), P(8.9f, 8.9f), brush.Get(), stroke);
+    rt_->DrawLine(P(15.1f, 15.1f), P(17.2f, 17.2f), brush.Get(), stroke);
+    rt_->DrawLine(P(6.8f, 17.2f), P(8.9f, 15.1f), brush.Get(), stroke);
+    rt_->DrawLine(P(15.1f, 8.9f), P(17.2f, 6.8f), brush.Get(), stroke);
+  }
+
+  ID2D1StrokeStyle* tab_icon_round_stroke() {
+    if (tab_icon_round_stroke_) return tab_icon_round_stroke_.Get();
+    ID2D1Factory* fac = nullptr;
+    rt_->GetFactory(&fac);
+    if (!fac) return nullptr;
+    const D2D1_STROKE_STYLE_PROPERTIES props = D2D1::StrokeStyleProperties(
+        D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND);
+    fac->CreateStrokeStyle(props, nullptr, 0, tab_icon_round_stroke_.GetAddressOf());
+    return tab_icon_round_stroke_.Get();
+  }
+
+  void paint_tab_stroke_glow(float base_stroke,
+                             const std::function<void(float stroke, ID2D1SolidColorBrush*)>& draw) {
+    const struct {
+      float width_mul;
+      float alpha;
+    } layers[] = {{9.f, 0.035f}, {5.5f, 0.065f}, {3.f, 0.11f}};
+    for (const auto& layer : layers) {
+      ComPtr<ID2D1SolidColorBrush> glow;
+      rt_->CreateSolidColorBrush(C(kDefaultAuraSlotColors[0], layer.alpha), glow.GetAddressOf());
+      if (!glow) continue;
+      draw(base_stroke * layer.width_mul, glow.Get());
+    }
+  }
+
+  void paint_tab_icon_glow(Tab tab, float cx, float cy, float size) {
+    ID2D1StrokeStyle* stroke_style = tab_icon_round_stroke();
+    ID2D1Factory* fac = nullptr;
+    rt_->GetFactory(&fac);
+    if (!fac) return;
+
+    switch (tab) {
+      case Tab::Aura: {
+        const float s = size / 24.f;
+        auto P = [&](float x, float y) { return D2D1::Point2F(cx + (x - 12.f) * s, cy + (y - 12.f) * s); };
+        const float base_stroke = std::max(1.f, size * (1.5f / 24.f));
+        ComPtr<ID2D1PathGeometry> geo;
+        if (FAILED(fac->CreatePathGeometry(geo.GetAddressOf())) || !geo) break;
+        ComPtr<ID2D1GeometrySink> sink;
+        if (FAILED(geo->Open(sink.GetAddressOf())) || !sink) break;
+        sink->BeginFigure(P(3.3f, 20.f), D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(P(3.3f, 9.f));
+        sink->AddBezier(D2D1::BezierSegment(P(3.3f, 6.2f), P(5.5f, 4.f), P(8.3f, 4.f)));
+        sink->AddLine(P(19.3f, 4.f));
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+        sink->BeginFigure(P(7.f, 20.f), D2D1_FIGURE_BEGIN_HOLLOW);
+        sink->AddLine(P(7.f, 11.f));
+        sink->AddBezier(D2D1::BezierSegment(P(7.f, 8.7f), P(8.7f, 8.f), P(10.f, 8.f)));
+        sink->AddLine(P(17.f, 8.f));
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+        sink->Close();
+        paint_tab_stroke_glow(base_stroke, [&](float stroke, ID2D1SolidColorBrush* brush) {
+          rt_->DrawGeometry(geo.Get(), brush, stroke, stroke_style);
+        });
+        break;
+      }
+      case Tab::Firefly: {
+        const float s = size / 24.f;
+        auto P = [&](float x, float y) { return D2D1::Point2F(cx + (x - 12.f) * s, cy + (y - 10.f) * s); };
+        const float base_stroke = std::max(1.25f, size * (2.f / 24.f));
+        ComPtr<ID2D1PathGeometry> wings;
+        if (SUCCEEDED(fac->CreatePathGeometry(wings.GetAddressOf())) && wings) {
+          ComPtr<ID2D1GeometrySink> sink;
+          if (SUCCEEDED(wings->Open(sink.GetAddressOf())) && sink) {
+            sink->BeginFigure(P(10.f, 11.f), D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddBezier(D2D1::BezierSegment(P(4.5f, 13.f), P(4.5f, 19.f), P(10.f, 17.f)));
+            sink->EndFigure(D2D1_FIGURE_END_OPEN);
+            sink->BeginFigure(P(14.f, 11.f), D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddBezier(D2D1::BezierSegment(P(19.5f, 13.f), P(19.5f, 19.f), P(14.f, 17.f)));
+            sink->EndFigure(D2D1_FIGURE_END_OPEN);
+            sink->Close();
+            paint_tab_stroke_glow(base_stroke, [&](float stroke, ID2D1SolidColorBrush* brush) {
+              rt_->DrawGeometry(wings.Get(), brush, stroke, stroke_style);
+            });
+          }
+        }
+        const D2D1_POINT_2F body_top = P(12.f, 8.5f);
+        const D2D1_POINT_2F body_bottom = P(12.f, 17.5f);
+        const D2D1_POINT_2F antenna_top = P(12.f, 4.5f);
+        const D2D1_POINT_2F antenna_bottom = P(12.f, 3.f);
+        paint_tab_stroke_glow(base_stroke, [&](float stroke, ID2D1SolidColorBrush* brush) {
+          rt_->DrawLine(body_top, body_bottom, brush, stroke, stroke_style);
+          rt_->DrawLine(antenna_top, antenna_bottom, brush, stroke, stroke_style);
+        });
+        const float head_r = std::max(1.f, 1.75f * s);
+        const D2D1_ELLIPSE head = D2D1::Ellipse(P(12.f, 6.5f), head_r, head_r);
+        paint_tab_stroke_glow(base_stroke, [&](float stroke, ID2D1SolidColorBrush* brush) {
+          rt_->DrawEllipse(head, brush, stroke, stroke_style);
+        });
+        break;
+      }
+      case Tab::General: {
+        const float s = size / 24.f;
+        auto P = [&](float x, float y) { return D2D1::Point2F(cx + (x - 12.f) * s, cy + (y - 12.f) * s); };
+        const float base_stroke = std::max(1.25f, size * (2.f / 24.f));
+        const float hub_r = std::max(1.f, 3.f * s);
+        const D2D1_ELLIPSE hub = D2D1::Ellipse(P(12.f, 12.f), hub_r, hub_r);
+        paint_tab_stroke_glow(base_stroke, [&](float stroke, ID2D1SolidColorBrush* brush) {
+          rt_->DrawEllipse(hub, brush, stroke, stroke_style);
+        });
+        const D2D1_POINT_2F spokes[] = {
+            P(12.f, 4.f),   P(12.f, 8.5f),   P(12.f, 15.5f), P(12.f, 20.f),  P(4.5f, 12.f),
+            P(7.5f, 12.f),  P(16.5f, 12.f),  P(19.5f, 12.f), P(6.8f, 6.8f),  P(8.9f, 8.9f),
+            P(15.1f, 15.1f), P(17.2f, 17.2f), P(6.8f, 17.2f), P(8.9f, 15.1f), P(15.1f, 8.9f),
+            P(17.2f, 6.8f),
+        };
+        paint_tab_stroke_glow(base_stroke, [&](float stroke, ID2D1SolidColorBrush* brush) {
+          for (size_t i = 0; i + 1 < std::size(spokes); i += 2) {
+            rt_->DrawLine(spokes[i], spokes[i + 1], brush, stroke, stroke_style);
+          }
+        });
+        break;
+      }
+    }
+  }
+
+  void paint_tab_cell(const RECT& rc, const wchar_t* label, IDWriteTextFormat* fmt, bool active, bool feature_enabled,
+                      Tab tab, int body_h) {
+    const D2D1_COLOR_F text_color = active ? C(kUiTabActive) : C(kUiTextSecondary);
+    const float icon_size = static_cast<float>(std::max(1, body_h));
+    const float gap = static_cast<float>(dip(6));
+    const float label_w = static_cast<float>(text_width(fmt, label));
+    const float total_w = icon_size + gap + label_w;
+    const float start_x = (static_cast<float>(rc.left + rc.right) - total_w) * 0.5f;
+    const float row_center_y = (static_cast<float>(rc.top) + static_cast<float>(rc.bottom)) * 0.5f;
+    const float icon_left = start_x;
+    const float icon_top = row_center_y - icon_size * 0.5f;
+    const float icon_cx = icon_left + icon_size * 0.5f;
+
+    const D2D1_COLOR_F icon_color = feature_enabled ? C(kDefaultAuraSlotColors[0]) : text_color;
+    if (feature_enabled) paint_tab_icon_glow(tab, icon_cx, row_center_y, icon_size);
+    switch (tab) {
+      case Tab::Aura:
+        draw_icon_tab_aura(icon_cx, row_center_y, icon_size, icon_color);
+        break;
+      case Tab::Firefly:
+        draw_icon_tab_firefly(icon_cx, row_center_y, icon_size, icon_color);
+        break;
+      case Tab::General:
+        draw_icon_tab_general(icon_cx, row_center_y, icon_size, icon_color);
+        break;
+    }
+
+    D2D1_RECT_F text{};
+    text.left = icon_left + icon_size + gap;
+    text.right = std::min(static_cast<float>(rc.right), start_x + total_w + static_cast<float>(dip(4)));
+    text.top = icon_top;
+    text.bottom = icon_top + icon_size;
+    draw_text(rt_.Get(), fmt, label, text, text_color, AlignH::Left, AlignV::Center, false);
   }
 
   void paint_back_button(const RECT& rc, IDWriteTextFormat* fmt, bool hover) {
@@ -1521,7 +1816,7 @@ class SettingsUi {
     // Anchor under the language dropdown (client DIP → screen pixels).
     const RECT& rc = slot_lang_[index];
     POINT pt{MulDiv(rc.left, dpi_, 96),
-             MulDiv(dip(kUiTabBarHeight) - scroll_y_ + rc.bottom, dpi_, 96)};
+             MulDiv(tab_bar_h() - scroll_y_ + rc.bottom, dpi_, 96)};
     ClientToScreen(hwnd_, &pt);
     const int cmd =
         TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_VERTICAL, pt.x, pt.y, 0, hwnd_, nullptr);
@@ -1537,6 +1832,7 @@ class SettingsUi {
   void emit() {
     settings_ = normalize_settings(settings_);
     if (callback_) callback_(settings_);
+    enforce_min_client_width();
     InvalidateRect(hwnd_, nullptr, FALSE);
   }
 
@@ -1770,7 +2066,9 @@ class SettingsUi {
   ComPtr<ID2D1Factory> d2d_;
   ComPtr<IDWriteFactory> dwrite_;
   ComPtr<ID2D1HwndRenderTarget> rt_;
+  ComPtr<ID2D1StrokeStyle> tab_icon_round_stroke_;
   int dpi_ = 96;
+  int tab_bar_h_cached_ = 0;
   int content_height_ = 0;
   int client_height_ = 0;
   int scroll_y_ = 0;
