@@ -42,8 +42,25 @@ constexpr float kSegmentAnimDurationMs = 200.f;
 constexpr UINT kTabAnimTimerId = 8;
 constexpr UINT kTabAnimFrameMs = 16;
 constexpr float kTabAnimDurationMs = 200.f;
+constexpr UINT kSlotAnimTimerId = 9;
+constexpr UINT kSlotAnimFrameMs = 16;
+constexpr float kSlotAnimDurationMs = 240.f;
 
 enum class Tab { Aura, Firefly, General };
+enum class SlotAnimKind { None, Add, Remove };
+
+struct SlotRowRects {
+  RECT lang{};
+  RECT swatch{};
+  RECT remove{};
+};
+
+struct SlotExitGhost {
+  bool active = false;
+  AuraColorSlot slot{};
+  SlotRowRects from{};
+  SlotRowRects to{};
+};
 enum class Page { Main, LangPicker };
 
 enum class Hit : int {
@@ -116,6 +133,40 @@ bool prefers_reduced_motion() {
 float ease_out_cubic(float t) {
   const float inv = 1.f - t;
   return 1.f - inv * inv * inv;
+}
+
+float lerp_f(float a, float b, float t) { return a + (b - a) * t; }
+
+bool rect_valid(const RECT& r) { return r.right > r.left && r.bottom > r.top; }
+
+bool rect_empty(const RECT& r) { return r.right <= r.left && r.bottom <= r.top; }
+
+RECT lerp_rect(const RECT& a, const RECT& b, float t) {
+  if (rect_empty(a)) return b;
+  if (rect_empty(b)) return a;
+  return RECT{static_cast<LONG>(std::lround(lerp_f(static_cast<float>(a.left), static_cast<float>(b.left), t))),
+              static_cast<LONG>(std::lround(lerp_f(static_cast<float>(a.top), static_cast<float>(b.top), t))),
+              static_cast<LONG>(std::lround(lerp_f(static_cast<float>(a.right), static_cast<float>(b.right), t))),
+              static_cast<LONG>(std::lround(lerp_f(static_cast<float>(a.bottom), static_cast<float>(b.bottom), t)))};
+}
+
+SlotRowRects lerp_slot_row(const SlotRowRects& a, const SlotRowRects& b, float t) {
+  return {lerp_rect(a.lang, b.lang, t), lerp_rect(a.swatch, b.swatch, t), lerp_rect(a.remove, b.remove, t)};
+}
+
+SlotRowRects collapse_slot_row(const SlotRowRects& row) {
+  auto collapse = [](RECT r) {
+    if (r.right <= r.left) return r;
+    const int cy = r.bottom > r.top ? (r.top + r.bottom) / 2 : r.top;
+    return RECT{r.left, cy, r.right, cy};
+  };
+  return {collapse(row.lang), collapse(row.swatch), collapse(row.remove)};
+}
+
+RECT collapse_rect_h(const RECT& r) {
+  if (r.right <= r.left) return r;
+  const int cy = r.bottom > r.top ? (r.top + r.bottom) / 2 : r.top;
+  return RECT{r.left, cy, r.right, cy};
 }
 
 class SettingsUi {
@@ -199,6 +250,8 @@ class SettingsUi {
   HWND hwnd() const { return hwnd_; }
 
   void sync(const Settings& s) {
+    // apply_settings() echoes back through sync() after every emit(); skip while animating.
+    if (slot_anim_pending_ || slot_anim_active()) return;
     settings_ = normalize_settings(s);
     InvalidateRect(hwnd_, nullptr, FALSE);
   }
@@ -313,6 +366,7 @@ class SettingsUi {
         }
         if (wp == kSegmentTimerId) tick_segment();
         if (wp == kTabAnimTimerId) tick_tab_anim();
+        if (wp == kSlotAnimTimerId) tick_slot_anim();
         return 0;
       case WM_SETCURSOR:
         if (LOWORD(lp) == HTCLIENT) {
@@ -332,6 +386,7 @@ class SettingsUi {
         }
         return 0;
       case WM_DESTROY:
+        KillTimer(hwnd_, kSlotAnimTimerId);
         hwnd_ = nullptr;
         return 0;
       default:
@@ -684,6 +739,175 @@ class SettingsUi {
     if (t >= 1.f) KillTimer(hwnd_, kSegmentTimerId);
   }
 
+  void reset_slot_anim() {
+    if (hwnd_) KillTimer(hwnd_, kSlotAnimTimerId);
+    slot_anim_t_ = 1.f;
+    slot_anim_pending_ = false;
+    slot_anim_kind_ = SlotAnimKind::None;
+    slot_anim_is_add_ = false;
+    slot_anim_index_ = 0;
+    slot_anim_row_h_ = 0;
+    slot_anim_from_.clear();
+    slot_anim_to_.clear();
+    add_slot_anim_from_ = {};
+    add_slot_anim_to_ = {};
+    slot_exit_ = {};
+  }
+
+  void capture_slot_anim_from() {
+    slot_anim_from_.clear();
+    for (size_t i = 0; i < settings_.aura_slots.size(); ++i) {
+      slot_anim_from_.push_back({slot_lang_[i], slot_swatch_[i], slot_remove_[i]});
+    }
+    add_slot_anim_from_ = add_slot_;
+  }
+
+  void setup_slot_anim_after_layout(int color_row, int row_gap) {
+    slot_anim_row_h_ = color_row + row_gap;
+    slot_anim_to_.clear();
+    for (size_t i = 0; i < settings_.aura_slots.size(); ++i) {
+      slot_anim_to_.push_back({slot_lang_[i], slot_swatch_[i], slot_remove_[i]});
+    }
+    add_slot_anim_to_ = add_slot_;
+
+    if (slot_anim_kind_ == SlotAnimKind::Add) {
+      slot_anim_is_add_ = true;
+      const size_t idx = slot_anim_index_;
+      if (idx < slot_anim_to_.size()) {
+        if (slot_anim_from_.size() < idx) slot_anim_from_.resize(idx);
+        slot_anim_from_.resize(slot_anim_to_.size());
+        slot_anim_from_[idx] = collapse_slot_row(slot_anim_to_[idx]);
+      }
+    } else if (slot_anim_kind_ == SlotAnimKind::Remove) {
+      slot_anim_is_add_ = false;
+      const size_t idx = slot_anim_index_;
+      std::vector<SlotRowRects> remapped;
+      remapped.reserve(slot_anim_to_.size());
+      for (size_t j = 0; j < slot_anim_to_.size(); ++j) {
+        const size_t old_j = j >= idx ? j + 1 : j;
+        if (old_j < slot_anim_from_.size())
+          remapped.push_back(slot_anim_from_[old_j]);
+        else if (j < slot_anim_to_.size())
+          remapped.push_back(slot_anim_to_[j]);
+      }
+      slot_anim_from_ = std::move(remapped);
+      if (slot_exit_.active) slot_exit_.to = collapse_slot_row(slot_exit_.from);
+      if (rect_empty(add_slot_anim_from_) && !rect_empty(add_slot_anim_to_)) {
+        add_slot_anim_from_ = collapse_rect_h(add_slot_anim_to_);
+      }
+    } else {
+      slot_anim_is_add_ = false;
+    }
+
+    slot_anim_kind_ = SlotAnimKind::None;
+    slot_anim_pending_ = false;
+    start_slot_anim();
+  }
+
+  void start_slot_anim() {
+    if (prefers_reduced_motion()) {
+      reset_slot_anim();
+      InvalidateRect(hwnd_, nullptr, FALSE);
+      return;
+    }
+    slot_anim_t_ = 0.f;
+    slot_anim_start_ = std::chrono::steady_clock::now();
+    SetTimer(hwnd_, kSlotAnimTimerId, kSlotAnimFrameMs, nullptr);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+  }
+
+  void tick_slot_anim() {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - slot_anim_start_)
+                             .count();
+    const float t = std::clamp(static_cast<float>(elapsed) / kSlotAnimDurationMs, 0.f, 1.f);
+    slot_anim_t_ = ease_out_cubic(t);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    if (t >= 1.f) {
+      KillTimer(hwnd_, kSlotAnimTimerId);
+      slot_exit_.active = false;
+      slot_anim_from_.clear();
+      slot_anim_to_.clear();
+      add_slot_anim_from_ = {};
+      add_slot_anim_to_ = {};
+    }
+  }
+
+  bool slot_anim_active() const {
+    return slot_anim_t_ < 1.f && (!slot_anim_from_.empty() || slot_exit_.active);
+  }
+
+  float slot_trailing_shift() const {
+    if (!slot_anim_active() || slot_anim_row_h_ <= 0) return 0.f;
+    const float remain = 1.f - slot_anim_t_;
+    if (slot_anim_is_add_) return -static_cast<float>(slot_anim_row_h_) * remain;
+    if (slot_exit_.active) return static_cast<float>(slot_anim_row_h_) * remain;
+    return 0.f;
+  }
+
+  SlotRowRects visual_slot_row(size_t i, float* alpha) const {
+    *alpha = 1.f;
+    if (i >= settings_.aura_slots.size()) return {};
+    if (!slot_anim_active() || i >= slot_anim_to_.size() ||
+        slot_anim_from_.size() != slot_anim_to_.size()) {
+      return {slot_lang_[i], slot_swatch_[i], slot_remove_[i]};
+    }
+    const float t = slot_anim_t_;
+    if (slot_anim_is_add_ && i == slot_anim_index_) *alpha = t;
+    return lerp_slot_row(slot_anim_from_[i], slot_anim_to_[i], t);
+  }
+
+  RECT visual_add_slot() const {
+    if (!slot_anim_active()) return add_slot_;
+    if (rect_empty(add_slot_anim_from_)) return add_slot_;
+    if (rect_empty(add_slot_anim_to_)) return add_slot_anim_from_;
+    return lerp_rect(add_slot_anim_from_, add_slot_anim_to_, slot_anim_t_);
+  }
+
+  void paint_aura_color_slots(float settings_alpha, IDWriteTextFormat* body_fmt, int color_row, int row_gap) {
+    if (slot_anim_pending_) setup_slot_anim_after_layout(color_row, row_gap);
+
+    for (size_t i = 0; i < settings_.aura_slots.size(); ++i) {
+      const auto& slot = settings_.aura_slots[i];
+      float alpha = 1.f;
+      const SlotRowRects row = visual_slot_row(i, &alpha);
+      const float row_alpha = settings_alpha * alpha;
+      const wchar_t* name = input_language_display_name(slot.lang_id, lang() != Lang::En);
+      paint_lang_dropdown(row.lang, name, body_fmt,
+                          hover_ == static_cast<Hit>(static_cast<int>(Hit::SlotLang0) + static_cast<int>(i)),
+                          row_alpha);
+      paint_swatch(row.swatch, slot.color,
+                   hover_ == static_cast<Hit>(static_cast<int>(Hit::SlotSwatch0) + static_cast<int>(i)), row_alpha);
+      if (rect_valid(row.remove)) {
+        paint_remove_button(row.remove,
+                            hover_ == static_cast<Hit>(static_cast<int>(Hit::SlotRemove0) + static_cast<int>(i)),
+                            row_alpha);
+      }
+    }
+
+    if (slot_exit_.active && slot_anim_t_ < 1.f) {
+      const float ghost_alpha = settings_alpha * (1.f - slot_anim_t_);
+      const SlotRowRects row = lerp_slot_row(slot_exit_.from, slot_exit_.to, slot_anim_t_);
+      const wchar_t* name = input_language_display_name(slot_exit_.slot.lang_id, lang() != Lang::En);
+      paint_lang_dropdown(row.lang, name, body_fmt, false, ghost_alpha);
+      paint_swatch(row.swatch, slot_exit_.slot.color, false, ghost_alpha);
+      if (rect_valid(row.remove)) paint_remove_button(row.remove, false, ghost_alpha);
+    }
+
+    if (static_cast<int>(settings_.aura_slots.size()) < kMaxAuraSlots) {
+      const RECT add_rc = visual_add_slot();
+      if (rect_valid(add_rc)) {
+        float add_alpha = 1.f;
+        if (slot_anim_active() && !slot_anim_is_add_ && !rect_empty(add_slot_anim_from_)) {
+          add_alpha = slot_anim_t_;
+        }
+        paint_add_slot_button(add_rc, body_fmt, hover_ == Hit::AddSlot, add_alpha);
+      }
+    } else if (slot_anim_is_add_ && slot_anim_active() && !rect_empty(add_slot_anim_from_)) {
+      paint_add_slot_button(add_slot_anim_from_, body_fmt, false, 1.f - slot_anim_t_);
+    }
+  }
+
   void flash_reset(bool colors) {
     if (colors)
       reset_colors_flash_ = true;
@@ -804,20 +1028,12 @@ class SettingsUi {
               C(kUiText, settings_alpha));
     draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kColorSub), r2f(sec_color_sub_),
               C(kUiTextSecondary, settings_alpha));
-    for (size_t i = 0; i < settings_.aura_slots.size() && i < slot_lang_.size(); ++i) {
-      const auto& slot = settings_.aura_slots[i];
-      const wchar_t* name = input_language_display_name(slot.lang_id, lang() != Lang::En);
-      paint_lang_dropdown(slot_lang_[i], name, body_fmt.Get(),
-                          hover_ == static_cast<Hit>(static_cast<int>(Hit::SlotLang0) + static_cast<int>(i)));
-      paint_swatch(slot_swatch_[i], slot.color,
-                   hover_ == static_cast<Hit>(static_cast<int>(Hit::SlotSwatch0) + static_cast<int>(i)));
-      if (settings_.aura_slots.size() > static_cast<size_t>(kMinAuraSlots)) {
-        paint_remove_button(slot_remove_[i],
-                            hover_ == static_cast<Hit>(static_cast<int>(Hit::SlotRemove0) + static_cast<int>(i)));
-      }
-    }
-    if (static_cast<int>(settings_.aura_slots.size()) < kMaxAuraSlots) {
-      paint_add_slot_button(add_slot_, body_fmt.Get(), hover_ == Hit::AddSlot);
+    paint_aura_color_slots(settings_alpha, body_fmt.Get(), std::max(um.row_h, um.swatch_h), dip(kUiRowGap));
+
+    const float trail_shift = slot_trailing_shift();
+    const float content_ty = static_cast<float>(tab_h) - static_cast<float>(scroll_y_);
+    if (trail_shift != 0.f) {
+      rt_->SetTransform(D2D1::Matrix3x2F::Translation(0.f, content_ty + trail_shift));
     }
     draw_text(rt_.Get(), body_fmt.Get(),
               reset_colors_flash_ ? tr(lang(), StringId::kColorResetDone) : tr(lang(), StringId::kColorReset),
@@ -856,6 +1072,9 @@ class SettingsUi {
                 body_fmt.Get(), settings_alpha);
     if (settings_.display_mode == kDisplayModeOnFocus && hover_box_.bottom > hover_box_.top) {
       paint_check(hover_box_, settings_.show_on_hover, tr(lang(), StringId::kDisplayHover), body_fmt.Get());
+    }
+    if (trail_shift != 0.f) {
+      rt_->SetTransform(D2D1::Matrix3x2F::Translation(0.f, content_ty));
     }
 
     } else if (active_tab_ == Tab::Firefly) {
@@ -1283,26 +1502,26 @@ class SettingsUi {
     draw_text(rt_.Get(), fmt, tr(lang(), StringId::kLangBack), text, C(kUiText), AlignH::Left, AlignV::Center);
   }
 
-  void paint_remove_button(const RECT& rc, bool hover) {
+  void paint_remove_button(const RECT& rc, bool hover, float alpha = 1.f) {
     const float rad = static_cast<float>(std::min(rc.bottom - rc.top, rc.right - rc.left)) * 0.28f;
-    if (hover) fill_round(rt_.Get(), r2f(rc), rad, C(kUiDangerFill));
+    if (hover) fill_round(rt_.Get(), r2f(rc), rad, C(kUiDangerFill, alpha));
     const float cx = (rc.left + rc.right) * 0.5f;
     const float cy = (rc.top + rc.bottom) * 0.5f;
     const float icon = static_cast<float>(std::min(rc.right - rc.left, rc.bottom - rc.top) - dip(8));
-    draw_icon_trash(cx, cy, std::max(14.f, icon), hover ? C(kUiDanger) : C(kUiTextSecondary));
+    draw_icon_trash(cx, cy, std::max(14.f, icon), hover ? C(kUiDanger, alpha) : C(kUiTextSecondary, alpha));
   }
 
-  void paint_add_slot_button(const RECT& rc, IDWriteTextFormat* fmt, bool hover) {
-    fill_round(rt_.Get(), r2f(rc), dip(10), hover ? C(kUiFillHover) : C(kUiFill));
+  void paint_add_slot_button(const RECT& rc, IDWriteTextFormat* fmt, bool hover, float alpha = 1.f) {
+    fill_round(rt_.Get(), r2f(rc), dip(10), hover ? C(kUiFillHover, alpha) : C(kUiFill, alpha));
     const float cy = (rc.top + rc.bottom) * 0.5f;
     const float icon = static_cast<float>(dip(16));
     const float pad = static_cast<float>(dip(8));
     const float icon_cx = static_cast<float>(rc.left) + pad + icon * 0.5f;
-    draw_icon_add(icon_cx, cy, icon, C(kUiText));
+    draw_icon_add(icon_cx, cy, icon, C(kUiText, alpha));
     D2D1_RECT_F text = r2f(rc);
     text.left = icon_cx + icon * 0.5f + static_cast<float>(dip(4));
     text.right -= pad;
-    draw_text(rt_.Get(), fmt, tr(lang(), StringId::kAddColorSlot), text, C(kUiText), AlignH::Left,
+    draw_text(rt_.Get(), fmt, tr(lang(), StringId::kAddColorSlot), text, C(kUiText, alpha), AlignH::Left,
               AlignV::Center);
   }
 
@@ -1353,15 +1572,16 @@ class SettingsUi {
     draw_text(rt_.Get(), fmt, label, text, C(kUiTextSecondary), AlignH::Left, AlignV::Center);
   }
 
-  void paint_lang_dropdown(const RECT& rc, const wchar_t* label, IDWriteTextFormat* fmt, bool hover) {
-    fill_round(rt_.Get(), r2f(rc), dip(10), hover ? C(kUiFillHover) : C(kUiFill));
+  void paint_lang_dropdown(const RECT& rc, const wchar_t* label, IDWriteTextFormat* fmt, bool hover,
+                           float alpha = 1.f) {
+    fill_round(rt_.Get(), r2f(rc), dip(10), hover ? C(kUiFillHover, alpha) : C(kUiFill, alpha));
     D2D1_RECT_F text = r2f(rc);
     text.left += static_cast<float>(dip(kUiButtonPadX));
     text.right -= static_cast<float>(dip(28));
-    draw_text(rt_.Get(), fmt, label, text, C(kUiText), AlignH::Left, AlignV::Center);
+    draw_text(rt_.Get(), fmt, label, text, C(kUiText, alpha), AlignH::Left, AlignV::Center);
 
     ComPtr<ID2D1SolidColorBrush> chev;
-    rt_->CreateSolidColorBrush(C(kUiTextSecondary), chev.GetAddressOf());
+    rt_->CreateSolidColorBrush(C(kUiTextSecondary, alpha), chev.GetAddressOf());
     if (!chev) return;
     const float cx = static_cast<float>(rc.right - dip(14));
     const float cy = (rc.top + rc.bottom) * 0.5f;
@@ -1380,16 +1600,16 @@ class SettingsUi {
     rt_->FillGeometry(geo.Get(), chev.Get());
   }
 
-  void paint_swatch(const RECT& rc, const Rgba& color, bool hover) {
+  void paint_swatch(const RECT& rc, const Rgba& color, bool hover, float alpha = 1.f) {
     const float rad = (rc.bottom - rc.top) * 0.5f;
-    fill_round(rt_.Get(), r2f(rc), rad, C(color));
+    fill_round(rt_.Get(), r2f(rc), rad, C(color, alpha));
     if (hover) {
       ComPtr<ID2D1SolidColorBrush> edge;
-      rt_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.45f), edge.GetAddressOf());
+      rt_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.45f * alpha), edge.GetAddressOf());
       rt_->DrawRoundedRectangle(RoundRect(r2f(rc), rad), edge.Get(), 1.5f);
     }
     ComPtr<ID2D1SolidColorBrush> chev;
-    rt_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.95f), chev.GetAddressOf());
+    rt_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.95f * alpha), chev.GetAddressOf());
     const float cx = static_cast<float>(rc.right - dip(16));
     const float cy = (rc.top + rc.bottom) * 0.5f;
     ComPtr<ID2D1PathGeometry> geo;
@@ -1795,15 +2015,33 @@ class SettingsUi {
     }
 
     if (active_tab_ == Tab::Aura) {
-      for (size_t i = 0; i < settings_.aura_slots.size(); ++i) {
-        if (contains(slot_lang_[i], x, cy))
-          return static_cast<Hit>(static_cast<int>(Hit::SlotLang0) + static_cast<int>(i));
-        if (contains(slot_swatch_[i], x, cy))
-          return static_cast<Hit>(static_cast<int>(Hit::SlotSwatch0) + static_cast<int>(i));
-        if (slot_remove_[i].right > slot_remove_[i].left && contains(slot_remove_[i], x, cy))
-          return static_cast<Hit>(static_cast<int>(Hit::SlotRemove0) + static_cast<int>(i));
+      if (slot_anim_active()) {
+        for (size_t i = 0; i < settings_.aura_slots.size(); ++i) {
+          float alpha = 1.f;
+          const SlotRowRects row = visual_slot_row(i, &alpha);
+          if (alpha > 0.05f) {
+            if (contains(row.lang, x, cy))
+              return static_cast<Hit>(static_cast<int>(Hit::SlotLang0) + static_cast<int>(i));
+            if (contains(row.swatch, x, cy))
+              return static_cast<Hit>(static_cast<int>(Hit::SlotSwatch0) + static_cast<int>(i));
+            if (rect_valid(row.remove) && contains(row.remove, x, cy))
+              return static_cast<Hit>(static_cast<int>(Hit::SlotRemove0) + static_cast<int>(i));
+          }
+        }
+        if (slot_exit_.active) return Hit::None;
+        const RECT add_rc = visual_add_slot();
+        if (rect_valid(add_rc) && contains(add_rc, x, cy)) return Hit::AddSlot;
+      } else {
+        for (size_t i = 0; i < settings_.aura_slots.size(); ++i) {
+          if (contains(slot_lang_[i], x, cy))
+            return static_cast<Hit>(static_cast<int>(Hit::SlotLang0) + static_cast<int>(i));
+          if (contains(slot_swatch_[i], x, cy))
+            return static_cast<Hit>(static_cast<int>(Hit::SlotSwatch0) + static_cast<int>(i));
+          if (slot_remove_[i].right > slot_remove_[i].left && contains(slot_remove_[i], x, cy))
+            return static_cast<Hit>(static_cast<int>(Hit::SlotRemove0) + static_cast<int>(i));
+        }
+        if (add_slot_.bottom > add_slot_.top && contains(add_slot_, x, cy)) return Hit::AddSlot;
       }
-      if (add_slot_.bottom > add_slot_.top && contains(add_slot_, x, cy)) return Hit::AddSlot;
       if (contains(reset_colors_, x, cy)) return Hit::ResetColors;
       if (contains(width_track_, x, cy)) return Hit::WidthTrack;
       if (contains(width_value_, x, cy)) return Hit::WidthValue;
@@ -1972,18 +2210,25 @@ class SettingsUi {
         InvalidateRect(hwnd_, nullptr, FALSE);
         break;
       case Hit::AddSlot: {
+        if (slot_anim_active()) break;
         std::vector<std::string> used;
         for (const auto& s : settings_.aura_slots) used.push_back(s.lang_id);
         auto unused = unused_input_languages(used);
         if (unused.empty()) break;
+        capture_slot_anim_from();
         AuraColorSlot slot;
         slot.lang_id = unused.front();
         slot.color = settings_.default_color_for_new_slot(settings_.aura_slots.size());
         settings_.aura_slots.push_back(slot);
+        slot_anim_kind_ = SlotAnimKind::Add;
+        slot_anim_index_ = settings_.aura_slots.size() - 1;
+        slot_anim_pending_ = true;
+        slot_exit_.active = false;
         emit();
         break;
       }
       case Hit::ResetColors:
+        reset_slot_anim();
         settings_.aura_slots = default_settings().aura_slots;
         flash_reset(true);
         emit();
@@ -2067,8 +2312,16 @@ class SettingsUi {
         } else if (hv >= static_cast<int>(Hit::SlotRemove0) &&
                    hv < static_cast<int>(Hit::SlotRemove0) + kMaxAuraSlots) {
           const size_t i = static_cast<size_t>(hv - static_cast<int>(Hit::SlotRemove0));
+          if (slot_anim_active()) break;
           if (i < settings_.aura_slots.size() &&
               settings_.aura_slots.size() > static_cast<size_t>(kMinAuraSlots)) {
+            capture_slot_anim_from();
+            slot_exit_.slot = settings_.aura_slots[i];
+            slot_exit_.from = {slot_lang_[i], slot_swatch_[i], slot_remove_[i]};
+            slot_exit_.active = true;
+            slot_anim_kind_ = SlotAnimKind::Remove;
+            slot_anim_index_ = i;
+            slot_anim_pending_ = true;
             settings_.aura_slots.erase(settings_.aura_slots.begin() + static_cast<std::ptrdiff_t>(i));
             emit();
           }
@@ -2162,6 +2415,18 @@ class SettingsUi {
   float seg_to_left_ = 0.f;
   float seg_to_right_ = 0.f;
   std::chrono::steady_clock::time_point seg_anim_start_{};
+  SlotAnimKind slot_anim_kind_ = SlotAnimKind::None;
+  bool slot_anim_pending_ = false;
+  bool slot_anim_is_add_ = false;
+  size_t slot_anim_index_ = 0;
+  int slot_anim_row_h_ = 0;
+  std::vector<SlotRowRects> slot_anim_from_;
+  std::vector<SlotRowRects> slot_anim_to_;
+  RECT add_slot_anim_from_{};
+  RECT add_slot_anim_to_{};
+  SlotExitGhost slot_exit_{};
+  float slot_anim_t_ = 1.f;
+  std::chrono::steady_clock::time_point slot_anim_start_{};
 
   Lang lang() const { return lang_from_key(settings_.language); }
 
