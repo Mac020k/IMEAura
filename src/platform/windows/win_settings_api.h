@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/settings.h"
+#include "core/firefly.h"
 
 #include <functional>
 #include <windows.h>
@@ -15,5 +16,6 @@ bool visible();
 HWND hwnd();
 void sync(const Settings& settings);
 void set_firefly_active(bool active);
+void set_firefly_capabilities(const FireflyCapabilities& caps);
 
 }  // namespace imeaura::win_settings

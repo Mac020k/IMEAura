@@ -304,7 +304,10 @@ NSImage* LoadUiIcon(const char* relative, NSString* accessibilityLabel) {
 - (void)syncSettings {
   using namespace imeaura::mac_settings_state;
   self.fireflyToggle.state = settings.firefly_enabled ? NSControlStateValueOn : NSControlStateValueOff;
-  self.fireflyStatus.stringValue = firefly_active ? @"Busy" : @"Available";
+  const Lang ui_lang = lang_from_key(settings.language);
+  self.fireflyStatus.stringValue =
+      firefly_active ? WtoNS(tr(ui_lang, StringId::kFireflyStateBusy))
+                     : WtoNS(tr(ui_lang, StringId::kFireflyStateAvailable));
   for (NSInteger i = 0; i < self.langButton.numberOfItems; ++i) {
     NSMenuItem* item = [self.langButton itemAtIndex:i];
     NSString* lid = item.representedObject;

@@ -17,4 +17,6 @@ target_link_libraries(imeaura_platform PRIVATE
   "-framework CoreGraphics"
   "-framework QuartzCore"
   "-framework Carbon"
+  "-framework IOKit"
+  "-framework CoreAudio"
 )

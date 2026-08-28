@@ -282,7 +282,11 @@ void BuildWindow() {
 void SyncUi() {
   if (!g_window) return;
   gtk_switch_set_active(GTK_SWITCH(g_firefly_switch), g_settings.firefly_enabled);
-  gtk_label_set_text(GTK_LABEL(g_firefly_status), g_firefly_active ? "Busy" : "Available");
+  const Lang ui_lang = lang_from_key(g_settings.language);
+  const std::string status =
+      WideToUtf8(g_firefly_active ? tr(ui_lang, StringId::kFireflyStateBusy)
+                                  : tr(ui_lang, StringId::kFireflyStateAvailable));
+  gtk_label_set_text(GTK_LABEL(g_firefly_status), status.c_str());
   size_t n = 0;
   const auto* cat = ui_language_catalog(n);
   for (guint i = 0; i < n; ++i) {

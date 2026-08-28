@@ -88,6 +88,31 @@ int main() {
   EXPECT(loaded.firefly_led_mode == "auto");
   EXPECT(loaded.firefly_caps_mode == "uppercase");
 
+  raw.firefly_busy_action = kFireflyBusyKeepAwake;
+  raw.firefly_keep_display_on = true;
+  loaded = normalize_settings(raw);
+  EXPECT(loaded.firefly_busy_action == kFireflyBusyKeepAwake);
+  EXPECT(loaded.firefly_keep_display_on);
+
+  raw.firefly_busy_action = "nope";
+  loaded = normalize_settings(raw);
+  EXPECT(loaded.firefly_busy_action == kFireflyBusyDnd);
+
+  raw.firefly_busy_action = kFireflyBusyVoiceInput;
+  raw.firefly_keep_display_on = true;
+  loaded = normalize_settings(raw);
+  EXPECT(!loaded.firefly_keep_display_on);
+
+  raw.firefly_busy_action = kFireflyBusyCustomKey;
+  raw.firefly_custom_vk = 0x74;
+  loaded = normalize_settings(raw);
+  EXPECT(loaded.firefly_busy_action == kFireflyBusyCustomKey);
+  EXPECT(loaded.firefly_custom_vk == 0x74);
+
+  raw.firefly_busy_action = "meeting";
+  loaded = normalize_settings(raw);
+  EXPECT(loaded.firefly_busy_action == kFireflyBusyDnd);
+
   raw.display_mode = kDisplayModeHidden;
   raw.aura_enabled = true;
   loaded = normalize_settings(raw);

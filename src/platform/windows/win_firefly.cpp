@@ -5,6 +5,8 @@
 
 #include <hidsdi.h>
 #include <setupapi.h>
+#include <mmdeviceapi.h>
+#include <endpointvolume.h>
 
 #include <atomic>
 #include <condition_variable>
@@ -268,6 +270,93 @@ bool ProbeDnd() {
   return rc == ERROR_SUCCESS && type == REG_BINARY && size >= 0x20;
 }
 
+bool ProbeKeepAwake() {
+  const EXECUTION_STATE prev = SetThreadExecutionState(ES_CONTINUOUS);
+  SetThreadExecutionState(ES_CONTINUOUS);
+  return prev != static_cast<EXECUTION_STATE>(0);
+}
+
+bool ProbeMicMute() {
+  IMMDeviceEnumerator* enumerator = nullptr;
+  if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
+                              reinterpret_cast<void**>(&enumerator)))) {
+    return false;
+  }
+  IMMDevice* device = nullptr;
+  const HRESULT hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device);
+  enumerator->Release();
+  if (FAILED(hr) || !device) return false;
+  IAudioEndpointVolume* volume = nullptr;
+  const HRESULT hr2 = device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
+                                       reinterpret_cast<void**>(&volume));
+  device->Release();
+  if (FAILED(hr2) || !volume) return false;
+  volume->Release();
+  return true;
+}
+
+bool ProbeSpeakerMute() {
+  IMMDeviceEnumerator* enumerator = nullptr;
+  if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
+                              reinterpret_cast<void**>(&enumerator)))) {
+    return false;
+  }
+  IMMDevice* device = nullptr;
+  const HRESULT hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+  enumerator->Release();
+  if (FAILED(hr) || !device) return false;
+  IAudioEndpointVolume* volume = nullptr;
+  const HRESULT hr2 = device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
+                                       reinterpret_cast<void**>(&volume));
+  device->Release();
+  if (FAILED(hr2) || !volume) return false;
+  volume->Release();
+  return true;
+}
+
+bool ProbeCustomKey() { return true; }
+
+bool ProbeVoiceInput() { return true; }
+
+void SetEndpointMute(EDataFlow flow, bool on, bool& saved_valid, BOOL& was_muted) {
+  IMMDeviceEnumerator* enumerator = nullptr;
+  if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
+                                reinterpret_cast<void**>(&enumerator)))) {
+    return;
+  }
+  IMMDevice* device = nullptr;
+  if (FAILED(enumerator->GetDefaultAudioEndpoint(flow, eConsole, &device))) {
+    enumerator->Release();
+    return;
+  }
+  enumerator->Release();
+  IAudioEndpointVolume* volume = nullptr;
+  if (FAILED(device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
+                              reinterpret_cast<void**>(&volume)))) {
+    device->Release();
+    return;
+  }
+  device->Release();
+  if (on) {
+    if (!saved_valid) {
+      volume->GetMute(&was_muted);
+      saved_valid = true;
+    }
+    volume->SetMute(TRUE, nullptr);
+  } else if (saved_valid) {
+    volume->SetMute(was_muted, nullptr);
+    saved_valid = false;
+  }
+  volume->Release();
+}
+
+void SendVoiceTypingShortcut() {
+  SendTaggedVk(VK_LWIN, true);
+  SendTaggedVk('H', true);
+  SendTaggedVk('H', false);
+  SendTaggedVk(VK_LWIN, false);
+}
+
 LRESULT CALLBACK HookProc(int code, WPARAM wp, LPARAM lp) {
   if (!g_self) return CallNextHookEx(nullptr, code, wp, lp);
   return g_self->filter_key(code, wp, lp);
@@ -280,12 +369,25 @@ struct WinFireflyBackend::Impl {
   std::atomic<bool> busy{false};
   std::string caps_mode = kFireflyCapsUppercase;
   std::string led_mode = kFireflyLedAuto;
+  std::string busy_action = kFireflyBusyDnd;
+  bool keep_display_on = false;
   bool preserved_caps_on = false;
   bool saved_caps_on = false;
   bool hid_ok = false;
   bool dnd_ok = false;
+  bool keep_awake_ok = false;
+  bool mic_mute_ok = false;
+  bool speaker_mute_ok = false;
+  bool voice_ok = false;
+  bool custom_key_ok = false;
   bool dnd_backed_up = false;
   bool use_plan_b = false;
+  bool keep_awake_active = false;
+  bool mic_saved_valid = false;
+  BOOL mic_was_muted = FALSE;
+  bool speaker_saved_valid = false;
+  BOOL speaker_was_muted = FALSE;
+  int custom_vk = 0;
 
   std::mutex dnd_mu;
   std::condition_variable dnd_cv;
@@ -331,6 +433,11 @@ FireflyCapabilities WinFireflyBackend::capabilities() const {
   c.can_intercept_caps = true;
   c.can_drive_led = true;
   c.can_set_dnd = impl_ ? impl_->dnd_ok : ProbeDnd();
+  c.can_keep_awake = impl_ ? impl_->keep_awake_ok : ProbeKeepAwake();
+  c.can_mute_mic = impl_ ? impl_->mic_mute_ok : ProbeMicMute();
+  c.can_mute_speaker = impl_ ? impl_->speaker_mute_ok : ProbeSpeakerMute();
+  c.can_trigger_voice_input = impl_ ? impl_->voice_ok : ProbeVoiceInput();
+  c.can_trigger_custom_key = impl_ ? impl_->custom_key_ok : ProbeCustomKey();
   return c;
 }
 
@@ -343,6 +450,11 @@ bool WinFireflyBackend::start(std::function<void()> on_toggle, const std::string
   impl_->saved_caps_on = CapsLockOn();
   impl_->preserved_caps_on = impl_->saved_caps_on;
   impl_->dnd_ok = ProbeDnd();
+  impl_->keep_awake_ok = ProbeKeepAwake();
+  impl_->mic_mute_ok = ProbeMicMute();
+  impl_->speaker_mute_ok = ProbeSpeakerMute();
+  impl_->voice_ok = ProbeVoiceInput();
+  impl_->custom_key_ok = ProbeCustomKey();
   impl_->hid_ok = SetLedHid(false);
   impl_->use_plan_b = false;
 
@@ -390,6 +502,7 @@ void WinFireflyBackend::stop() {
     RestoreDnd();
     RestartWpn();
   }
+  clear_sustained_busy_effects();
   SetCapsLockState(impl_->saved_caps_on);
   delete impl_;
   impl_ = nullptr;
@@ -414,6 +527,19 @@ void WinFireflyBackend::set_led_mode(const std::string& mode) {
   set_led(impl_->busy.load());
 }
 
+void WinFireflyBackend::set_busy_action(const std::string& action, bool keep_display_on, int custom_vk) {
+  if (!impl_) return;
+  const bool was_busy = impl_->busy.load();
+  if (was_busy) clear_sustained_busy_effects();
+  impl_->busy_action = normalize_busy_action(action);
+  impl_->keep_display_on = keep_display_on;
+  impl_->custom_vk = custom_vk;
+  if (was_busy) {
+    const auto fx = resolve_busy_effects(impl_->busy_action, true, false, impl_->keep_display_on, impl_->custom_vk);
+    apply_busy_effects(fx);
+  }
+}
+
 void WinFireflyBackend::set_led(bool on) {
   if (!impl_) return;
   if (impl_->led_mode == kFireflyLedNone) return;
@@ -427,26 +553,81 @@ void WinFireflyBackend::set_led(bool on) {
 }
 
 void WinFireflyBackend::set_dnd(bool on) {
-  if (!impl_) return;
+  if (!impl_ || !impl_->dnd_ok) return;
   std::lock_guard lk(impl_->dnd_mu);
   impl_->dnd_target = on;
   impl_->dnd_pending = true;
   impl_->dnd_cv.notify_one();
 }
 
+void WinFireflyBackend::set_keep_awake(bool on, bool keep_display_on) {
+  if (!impl_ || !impl_->keep_awake_ok) return;
+  if (on) {
+    EXECUTION_STATE flags = ES_CONTINUOUS | ES_SYSTEM_REQUIRED;
+    if (keep_display_on) flags = static_cast<EXECUTION_STATE>(flags | ES_DISPLAY_REQUIRED);
+    SetThreadExecutionState(flags);
+    impl_->keep_awake_active = true;
+  } else if (impl_->keep_awake_active) {
+    SetThreadExecutionState(ES_CONTINUOUS);
+    impl_->keep_awake_active = false;
+  }
+}
+
+void WinFireflyBackend::set_mic_mute(bool on) {
+  if (!impl_ || !impl_->mic_mute_ok) return;
+  SetEndpointMute(eCapture, on, impl_->mic_saved_valid, impl_->mic_was_muted);
+}
+
+void WinFireflyBackend::set_speaker_mute(bool on) {
+  if (!impl_ || !impl_->speaker_mute_ok) return;
+  SetEndpointMute(eRender, on, impl_->speaker_saved_valid, impl_->speaker_was_muted);
+}
+
+void WinFireflyBackend::trigger_voice_input() {
+  if (!impl_ || !impl_->voice_ok) return;
+  SendVoiceTypingShortcut();
+}
+
+void WinFireflyBackend::trigger_custom_key(int vk) {
+  if (!impl_ || !impl_->custom_key_ok || vk <= 0) return;
+  const WORD key = static_cast<WORD>(vk);
+  SendTaggedVk(key, true);
+  SendTaggedVk(key, false);
+}
+
+void WinFireflyBackend::clear_sustained_busy_effects() {
+  set_dnd(false);
+  set_keep_awake(false, false);
+  set_mic_mute(false);
+  set_speaker_mute(false);
+}
+
+void WinFireflyBackend::apply_busy_effects(const FireflyBusyEffects& fx) {
+  set_dnd(fx.want_dnd);
+  set_keep_awake(fx.want_keep_awake, fx.keep_display_on);
+  set_mic_mute(fx.want_mic_mute);
+  set_speaker_mute(fx.want_speaker_mute);
+  if (fx.trigger_voice_input) trigger_voice_input();
+  if (fx.trigger_custom_key) trigger_custom_key(fx.custom_vk);
+}
+
 bool WinFireflyBackend::is_active() const { return impl_ && impl_->busy.load(); }
 
 void WinFireflyBackend::handle_toggle() {
   if (!impl_) return;
-  const bool next = !impl_->busy.load();
+  const bool prev = impl_->busy.load();
+  const bool next = !prev;
   impl_->busy.store(next);
   FireflyInput in{};
   in.enabled = true;
   in.toggle_requested = true;
-  in.current_active = !next;
+  in.current_active = prev;
+  in.busy_action = impl_->busy_action;
+  in.keep_display_on = impl_->keep_display_on;
+  in.custom_vk = impl_->custom_vk;
   const FireflyOutput out = evaluate_firefly(in);
   set_led(out.want_led_on);
-  set_dnd(out.want_dnd);
+  apply_busy_effects(out.effects);
   if (impl_->on_toggle) impl_->on_toggle();
 }
 

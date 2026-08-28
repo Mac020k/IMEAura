@@ -9,5 +9,3 @@ The native C++ build uses only OS SDKs and standard libraries:
 | Windows SDK / Windows.UI.Composition | Microsoft SDK terms |
 | macOS SDK (AppKit, Core Animation, Carbon TIS) | Apple SDK terms |
 | Linux: Wayland protocols, GTK 4, D-Bus, AT-SPI | LGPL-2.1+ / MIT (as shipped by your distro) |
-
-No Qt / PySide6 is bundled in the native build.

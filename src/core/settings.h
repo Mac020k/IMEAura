@@ -41,6 +41,9 @@ struct Settings {
   bool firefly_enabled = false;
   std::string firefly_led_mode = kFireflyLedAuto;
   std::string firefly_caps_mode = kFireflyCapsUppercase;
+  std::string firefly_busy_action = kFireflyBusyDnd;
+  bool firefly_keep_display_on = false;
+  int firefly_custom_vk = 0;
   std::string language = kLangJa;
   // Debug: skip quit confirmation dialogs when true.
   bool easy_quit = false;

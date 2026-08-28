@@ -62,6 +62,20 @@ enum class StringId {
   kFireflyLedOk,
   kFireflyDndOk,
   kFireflyUnsupported,
+  kFireflyBusySection,
+  kFireflyBusyChange,
+  kFireflyBusyBack,
+  kFireflyBusyDnd,
+  kFireflyBusyKeepAwake,
+  kFireflyBusyVoiceInput,
+  kFireflyBusyAudioMute,
+  kFireflyBusyCustomKey,
+  kFireflyKeepDisplayOn,
+  kFireflyKeepAwakeOk,
+  kFireflyVoiceOk,
+  kFireflyMicOk,
+  kFireflySpeakerOk,
+  kFireflyCustomKeyPrompt,
   kColorDialogTitle,
   kColorDialogRgb,
   kColorDialogHsb,
@@ -70,6 +84,14 @@ enum class StringId {
   kCancel,
   kTrayOpen,
   kTrayQuit,
+  kAboutDialogTitle,
+  kAboutVersionFmt,
+  kAboutCopyright,
+  kAboutLicenseNote,
+  kAboutLicenseHeading,
+  kAboutThirdPartyHeading,
+  kAboutLoadError,
+  kClose,
   kCount
 };
 
@@ -77,5 +99,6 @@ const wchar_t* tr(Lang lang, StringId id);
 Lang lang_from_key(const std::string& key);
 const wchar_t* lang_font_family(Lang lang);
 StringId string_id_for_ui_lang(const std::string& key);
+StringId string_id_for_busy_action(const std::string& action_key);
 
 }  // namespace imeaura

@@ -24,6 +24,7 @@ int main() {
     const auto out = evaluate_firefly(in);
     EXPECT(!out.active);
     EXPECT(!out.want_led_on);
+    EXPECT(!out.effects.want_dnd);
     EXPECT(!out.want_dnd);
     EXPECT(out.dnd_write_needed);
   }
@@ -33,9 +34,11 @@ int main() {
     in.enabled = true;
     in.current_active = false;
     in.toggle_requested = true;
+    in.busy_action = kFireflyBusyDnd;
     const auto out = evaluate_firefly(in);
     EXPECT(out.active);
     EXPECT(out.want_led_on);
+    EXPECT(out.effects.want_dnd);
     EXPECT(out.want_dnd);
     EXPECT(out.dnd_write_needed);
   }
@@ -45,11 +48,100 @@ int main() {
     in.enabled = true;
     in.current_active = true;
     in.toggle_requested = true;
+    in.busy_action = kFireflyBusyDnd;
     const auto out = evaluate_firefly(in);
     EXPECT(!out.active);
     EXPECT(!out.want_led_on);
+    EXPECT(!out.effects.want_dnd);
     EXPECT(!out.want_dnd);
   }
+
+  {
+    FireflyInput in{};
+    in.enabled = true;
+    in.current_active = false;
+    in.toggle_requested = true;
+    in.busy_action = kFireflyBusyKeepAwake;
+    in.keep_display_on = true;
+    const auto out = evaluate_firefly(in);
+    EXPECT(out.effects.want_keep_awake);
+    EXPECT(out.effects.keep_display_on);
+    EXPECT(!out.effects.want_dnd);
+  }
+
+  {
+    FireflyInput in{};
+    in.enabled = true;
+    in.current_active = false;
+    in.toggle_requested = true;
+    in.busy_action = kFireflyBusyVoiceInput;
+    const auto out = evaluate_firefly(in);
+    EXPECT(out.effects.trigger_voice_input);
+    EXPECT(!out.effects.want_dnd);
+  }
+
+  {
+    FireflyInput in{};
+    in.enabled = true;
+    in.current_active = true;
+    in.toggle_requested = true;
+    in.busy_action = kFireflyBusyVoiceInput;
+    const auto out = evaluate_firefly(in);
+    EXPECT(!out.effects.trigger_voice_input);
+  }
+
+  {
+    FireflyInput in{};
+    in.enabled = true;
+    in.current_active = false;
+    in.toggle_requested = true;
+    in.busy_action = kFireflyBusyAudioMute;
+    const auto out = evaluate_firefly(in);
+    EXPECT(out.effects.want_mic_mute);
+    EXPECT(out.effects.want_speaker_mute);
+    EXPECT(!out.effects.want_dnd);
+  }
+
+  {
+    FireflyInput in{};
+    in.enabled = true;
+    in.current_active = false;
+    in.toggle_requested = true;
+    in.busy_action = kFireflyBusyCustomKey;
+    in.custom_vk = 0x74;
+    const auto out = evaluate_firefly(in);
+    EXPECT(out.effects.trigger_custom_key);
+    EXPECT(out.effects.custom_vk == 0x74);
+  }
+
+  {
+    FireflyInput in{};
+    in.enabled = true;
+    in.current_active = true;
+    in.toggle_requested = true;
+    in.busy_action = kFireflyBusyCustomKey;
+    in.custom_vk = 0x74;
+    const auto out = evaluate_firefly(in);
+    EXPECT(!out.effects.trigger_custom_key);
+  }
+
+  {
+    FireflyCapabilities caps{};
+    caps.can_set_dnd = true;
+    caps.can_keep_awake = true;
+    caps.can_mute_mic = true;
+    caps.can_mute_speaker = true;
+    caps.can_trigger_voice_input = true;
+    caps.can_trigger_custom_key = true;
+    EXPECT(busy_action_supported(kFireflyBusyDnd, caps));
+    EXPECT(busy_action_supported(kFireflyBusyAudioMute, caps));
+    EXPECT(busy_action_supported(kFireflyBusyCustomKey, caps));
+    caps.can_mute_speaker = false;
+    EXPECT(!busy_action_supported(kFireflyBusyAudioMute, caps));
+  }
+
+  EXPECT(normalize_busy_action("meeting") == kFireflyBusyDnd);
+  EXPECT(normalize_busy_action("hands_free") == kFireflyBusyDnd);
 
   EXPECT(firefly_want_uppercase(kFireflyCapsUppercase, false, false));
   EXPECT(!firefly_want_uppercase(kFireflyCapsUppercase, true, false));
@@ -63,16 +155,23 @@ int main() {
     raw.firefly_enabled = true;
     raw.firefly_led_mode = "hid";
     raw.firefly_caps_mode = "preserve";
+    raw.firefly_busy_action = kFireflyBusyAudioMute;
+    raw.firefly_keep_display_on = true;
+    raw.firefly_custom_vk = 0x74;
     Settings n = normalize_settings(raw);
     EXPECT(n.firefly_enabled);
     EXPECT(n.firefly_led_mode == kFireflyLedHid);
     EXPECT(n.firefly_caps_mode == kFireflyCapsPreserve);
+    EXPECT(n.firefly_busy_action == kFireflyBusyAudioMute);
+    EXPECT(!n.firefly_keep_display_on);
 
-    raw.firefly_led_mode = "nope";
-    raw.firefly_caps_mode = "nope";
+    raw.firefly_busy_action = "invalid";
     n = normalize_settings(raw);
-    EXPECT(n.firefly_led_mode == kFireflyLedAuto);
-    EXPECT(n.firefly_caps_mode == kFireflyCapsUppercase);
+    EXPECT(n.firefly_busy_action == kFireflyBusyDnd);
+
+    raw.firefly_busy_action = "meeting";
+    n = normalize_settings(raw);
+    EXPECT(n.firefly_busy_action == kFireflyBusyDnd);
   }
 
   if (failures) return 1;

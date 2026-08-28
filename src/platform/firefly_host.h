@@ -22,6 +22,7 @@ class FireflyHost {
   void shutdown();
   bool is_active() const;
   bool is_running() const { return backend_ != nullptr; }
+  FireflyCapabilities capabilities() const;
   void poll();
 
  private:
