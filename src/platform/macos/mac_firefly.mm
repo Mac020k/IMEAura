@@ -168,6 +168,8 @@ bool ProbeSpeakerMute() {
 
 bool ProbeCustomKey() { return true; }
 
+bool ProbeVoiceInput() { return true; }
+
 void SendDictationShortcut() {
   constexpr CGKeyCode kFn = 0x3F;
   SendTaggedVk(kFn, true);
