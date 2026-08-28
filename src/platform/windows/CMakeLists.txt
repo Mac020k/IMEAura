@@ -18,7 +18,10 @@ add_library(imeaura_platform STATIC
 target_include_directories(imeaura_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(imeaura_platform PUBLIC imeaura_core)
 
-target_compile_definitions(imeaura_platform PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNING)
+target_compile_definitions(imeaura_platform PRIVATE
+  UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNING
+  IMEAURA_VERSION=L"${PROJECT_VERSION}"
+)
 target_compile_options(imeaura_platform PRIVATE /utf-8 /W4 /permissive-)
 set_property(TARGET imeaura_platform PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 

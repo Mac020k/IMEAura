@@ -1,12 +1,10 @@
 ---
-description: IME Aura native C++ rules (no Qt)
-globs: "**/*.{cpp,h,hpp,mm,c}"
+description: IME Aura native C++ rules
 alwaysApply: false
 ---
-
 # Native C++ (IME Aura)
 
-- C++20, no Qt / PySide6 in `src/`.
+- C++20 in `src/`.
 - Windows overlay: Windows.UI.Composition only; no D3D/D2D device in the host path.
 - COM: use WRL `Microsoft::WRL::ComPtr` or C++/WinRT `winrt::` types; no raw `Release` leaks.
 - MSVC release builds: static CRT (`/MT`), `WIN32_LEAN_AND_MEAN`, `NOMINMAX`, `/utf-8`.

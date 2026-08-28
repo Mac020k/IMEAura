@@ -1,28 +1,43 @@
 #include "platform/windows/win_about.h"
 
+#include "core/i18n.h"
+#include "core/settings.h"
 #include "core/tokens.h"
 #include "platform/windows/win_assets.h"
 #include "platform/windows/win_icon.h"
 
 #include <d2d1.h>
 #include <dwrite.h>
+#include <dwmapi.h>
 #include <windowsx.h>
 #include <wrl/client.h>
 
 #include <algorithm>
 #include <string>
-#include <vector>
 
 using Microsoft::WRL::ComPtr;
+
+#ifndef IMEAURA_VERSION
+#define IMEAURA_VERSION L"2.4.0"
+#endif
 
 namespace imeaura {
 namespace {
 
 constexpr wchar_t kAboutClass[] = L"IMEAuraAbout";
-constexpr int kScrollBarWidth = 12;
+constexpr UINT kDwmWindowCornerPreference = 33;
+constexpr UINT kDwmCornerRound = 2;
+constexpr int kAboutMinClientH = 320;
+constexpr DWORD kAboutWndStyle = WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX;
 
-D2D1_COLOR_F UiColor(const Rgba& c, float scale = 1.f) {
+enum class AboutHit : int { None = 0, Close, ScrollBar };
+
+D2D1_COLOR_F C(const Rgba& c, float scale = 1.f) {
   return D2D1::ColorF(c.r / 255.f, c.g / 255.f, c.b / 255.f, (c.a / 255.f) * scale);
+}
+
+D2D1_ROUNDED_RECT RoundRect(const D2D1_RECT_F& r, float radius) {
+  return D2D1::RoundedRect(r, radius, radius);
 }
 
 std::wstring Utf8ToWide(const std::string& s) {
@@ -39,12 +54,15 @@ class AboutDialogUi {
   void show_modal(HWND owner) {
     owner_ = owner;
     done_ = false;
+    hover_ = AboutHit::None;
+
+    Settings tmp_s;
+    load_settings(tmp_s);
+    lang_ = lang_from_key(tmp_s.language);
 
     license_text_ = win_read_asset_utf8("LICENSE");
     notices_text_ = win_read_asset_utf8("THIRD_PARTY_NOTICES.md");
-    body_text_ = L"--- LICENSE ---\n\n" + Utf8ToWide(license_text_) + L"\n\n--- THIRD_PARTY_NOTICES ---\n\n" +
-                 Utf8ToWide(notices_text_);
-    if (body_text_.empty()) body_text_ = L"(LICENSE / THIRD_PARTY_NOTICES を読み込めませんでした)";
+    rebuild_body_text();
 
     static bool registered = false;
     if (!registered) {
@@ -60,16 +78,23 @@ class AboutDialogUi {
 
     RECT owner_rc{};
     GetWindowRect(owner, &owner_rc);
-    const int w = 480;
-    const int h = 520;
-    const int x = owner_rc.left + ((owner_rc.right - owner_rc.left) - w) / 2;
-    const int y = owner_rc.top + ((owner_rc.bottom - owner_rc.top) - h) / 2;
+    const int sys_dpi = static_cast<int>(GetDpiForSystem());
+    const int client_w = dip(kUiDefaultWindowW);
+    const int client_h = 480;
+    RECT frame_rc{0, 0, MulDiv(client_w, sys_dpi, 96), MulDiv(client_h, sys_dpi, 96)};
+    AdjustWindowRectExForDpi(&frame_rc, kAboutWndStyle, FALSE, 0, static_cast<UINT>(sys_dpi));
+    const int frame_w = frame_rc.right - frame_rc.left;
+    const int frame_h = frame_rc.bottom - frame_rc.top;
+    const int x = owner_rc.left + ((owner_rc.right - owner_rc.left) - frame_w) / 2;
+    const int y = owner_rc.top + ((owner_rc.bottom - owner_rc.top) - frame_h) / 2;
 
-    hwnd_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST, kAboutClass, L"IME Aura",
-                            WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, w, h, owner, nullptr,
-                            GetModuleHandleW(nullptr), this);
+    hwnd_ = CreateWindowExW(WS_EX_DLGMODALFRAME, kAboutClass, tr(lang_, StringId::kAboutDialogTitle), kAboutWndStyle,
+                            x, y, frame_w, frame_h, owner, nullptr, GetModuleHandleW(nullptr), this);
     if (!hwnd_) return;
 
+    DWORD corner = kDwmCornerRound;
+    DwmSetWindowAttribute(hwnd_, kDwmWindowCornerPreference, &corner, sizeof(corner));
+    win_set_window_icons(hwnd_);
     EnableWindow(owner, FALSE);
     ShowWindow(hwnd_, SW_SHOW);
     SetForegroundWindow(hwnd_);
@@ -85,7 +110,36 @@ class AboutDialogUi {
   }
 
  private:
+  void rebuild_body_text() {
+    body_text_.clear();
+    if (license_text_.empty() && notices_text_.empty()) {
+      body_text_ = tr(lang_, StringId::kAboutLoadError);
+      return;
+    }
+    if (!license_text_.empty()) {
+      body_text_ += tr(lang_, StringId::kAboutLicenseHeading);
+      body_text_ += L"\n\n";
+      body_text_ += Utf8ToWide(license_text_);
+    }
+    if (!notices_text_.empty()) {
+      if (!body_text_.empty()) body_text_ += L"\n\n";
+      body_text_ += tr(lang_, StringId::kAboutThirdPartyHeading);
+      body_text_ += L"\n\n";
+      body_text_ += Utf8ToWide(notices_text_);
+    }
+  }
+
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_GETMINMAXINFO) {
+      auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
+      int min_dpi = static_cast<int>(GetDpiForWindow(hwnd));
+      if (min_dpi == 0) min_dpi = static_cast<int>(GetDpiForSystem());
+      RECT min_rc{0, 0, MulDiv(kUiMinWindowW, min_dpi, 96), MulDiv(kAboutMinClientH, min_dpi, 96)};
+      AdjustWindowRectExForDpi(&min_rc, kAboutWndStyle, FALSE, 0, static_cast<UINT>(min_dpi));
+      mmi->ptMinTrackSize.x = min_rc.right - min_rc.left;
+      mmi->ptMinTrackSize.y = min_rc.bottom - min_rc.top;
+      return 0;
+    }
     AboutDialogUi* self = reinterpret_cast<AboutDialogUi*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     if (msg == WM_NCCREATE) {
       auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
@@ -114,9 +168,8 @@ class AboutDialogUi {
         dpi_ = static_cast<int>(HIWORD(wp));
         release_target();
         const RECT* suggested = reinterpret_cast<const RECT*>(lp);
-        SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top,
-                     suggested->right - suggested->left, suggested->bottom - suggested->top,
-                     SWP_NOZORDER | SWP_NOACTIVATE);
+        SetWindowPos(hwnd_, nullptr, suggested->left, suggested->top, suggested->right - suggested->left,
+                     suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
         layout();
         measure_body();
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -130,26 +183,31 @@ class AboutDialogUi {
       case WM_MOUSEWHEEL:
         scroll_by(-GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA * dip(24));
         return 0;
-      case WM_LBUTTONDOWN: {
-        POINT pt{MulDiv(GET_X_LPARAM(lp), 96, dpi_), MulDiv(GET_Y_LPARAM(lp), 96, dpi_)};
-        if (contains(scroll_bar_, pt.x, pt.y) && scroll_max_ > 0) {
-          dragging_scroll_ = true;
-          SetCapture(hwnd_);
-        } else if (contains(close_, pt.x, pt.y)) {
-          DestroyWindow(hwnd_);
-        }
-        return 0;
-      }
-      case WM_MOUSEMOVE:
+      case WM_MOUSEMOVE: {
+        const int x = MulDiv(GET_X_LPARAM(lp), 96, dpi_);
+        const int y = MulDiv(GET_Y_LPARAM(lp), 96, dpi_);
+        update_hover(x, y);
         if (dragging_scroll_ && scroll_max_ > 0) {
           const int track_h = scroll_bar_.bottom - scroll_bar_.top;
-          const int thumb_h = std::max(dip(24), track_h * client_h_ / std::max(content_h_, 1));
+          const int thumb_h = std::max(dip(24), track_h * client_body_h_ / std::max(content_h_, 1));
           const int usable = std::max(1, track_h - thumb_h);
-          scroll_y_ = (MulDiv(GET_Y_LPARAM(lp), 96, dpi_) - scroll_bar_.top - thumb_h / 2) * scroll_max_ / usable;
+          scroll_y_ = (y - scroll_bar_.top - thumb_h / 2) * scroll_max_ / usable;
           scroll_y_ = std::clamp(scroll_y_, 0, scroll_max_);
           InvalidateRect(hwnd_, nullptr, FALSE);
         }
         return 0;
+      }
+      case WM_LBUTTONDOWN: {
+        const int x = MulDiv(GET_X_LPARAM(lp), 96, dpi_);
+        const int y = MulDiv(GET_Y_LPARAM(lp), 96, dpi_);
+        if (contains(scroll_bar_, x, y) && scroll_max_ > 0) {
+          dragging_scroll_ = true;
+          SetCapture(hwnd_);
+        } else if (contains(close_, x, y)) {
+          DestroyWindow(hwnd_);
+        }
+        return 0;
+      }
       case WM_LBUTTONUP:
         if (GetCapture() == hwnd_) ReleaseCapture();
         dragging_scroll_ = false;
@@ -166,14 +224,29 @@ class AboutDialogUi {
     return DefWindowProcW(hwnd_, msg, wp, lp);
   }
 
+  void update_hover(int x, int y) {
+    AboutHit next = AboutHit::None;
+    if (contains(close_, x, y)) {
+      next = AboutHit::Close;
+    } else if (scroll_max_ > 0 && contains(scroll_bar_, x, y)) {
+      next = AboutHit::ScrollBar;
+    }
+    if (next != hover_) {
+      hover_ = next;
+      InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+  }
+
   int dip(int v) const { return v; }
 
   int client_dip_w() const {
-    RECT rc{}; GetClientRect(hwnd_, &rc);
+    RECT rc{};
+    GetClientRect(hwnd_, &rc);
     return MulDiv(rc.right, 96, dpi_);
   }
   int client_dip_h() const {
-    RECT rc{}; GetClientRect(hwnd_, &rc);
+    RECT rc{};
+    GetClientRect(hwnd_, &rc);
     return MulDiv(rc.bottom, 96, dpi_);
   }
 
@@ -193,17 +266,21 @@ class AboutDialogUi {
     GetClientRect(hwnd_, &rc);
     if (rc.right <= 0 || rc.bottom <= 0) return false;
     const float dpi_f = static_cast<float>(dpi_);
-    if (!SUCCEEDED(d2d_->CreateHwndRenderTarget(
-            D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
-                                         D2D1::PixelFormat(), dpi_f, dpi_f),
-            D2D1::HwndRenderTargetProperties(hwnd_, D2D1::SizeU(static_cast<UINT>(rc.right), static_cast<UINT>(rc.bottom)),
-                                             D2D1_PRESENT_OPTIONS_NONE),
-            rt_.GetAddressOf())))
-      return false;
-    return true;
+    return SUCCEEDED(d2d_->CreateHwndRenderTarget(
+        D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1::PixelFormat(), dpi_f, dpi_f),
+        D2D1::HwndRenderTargetProperties(hwnd_, D2D1::SizeU(static_cast<UINT>(rc.right), static_cast<UINT>(rc.bottom)),
+                                         D2D1_PRESENT_OPTIONS_NONE),
+        rt_.GetAddressOf()));
   }
 
   void release_target() { rt_.Reset(); }
+
+  ComPtr<IDWriteTextFormat> make_format(float size, DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL) {
+    ComPtr<IDWriteTextFormat> fmt;
+    dwrite_->CreateTextFormat(lang_font_family(lang_), nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
+                              DWRITE_FONT_STRETCH_NORMAL, size, L"en-us", fmt.GetAddressOf());
+    return fmt;
+  }
 
   RECT box(int x, int y, int w, int h) const { return RECT{x, y, x + w, y + h}; }
 
@@ -216,29 +293,86 @@ class AboutDialogUi {
     const int ch = client_dip_h();
     client_w_ = cw;
     client_h_ = ch;
-    const int m = 24;
-    header_ = box(m, m, cw - m * 2, 120);
-    body_ = box(m, header_.bottom + 8, cw - m - (kScrollBarWidth + 8), ch - 56);
-    scroll_bar_ = box(cw - m - kScrollBarWidth, body_.top, kScrollBarWidth, body_.bottom - body_.top);
-    close_ = box(m, ch - 44, cw - m * 2, 32);
+
+    const int m = dip(kUiMargin);
+    const int gap = dip(kUiRowGap);
+    const int sec = dip(kUiSectionGap);
+    const int row = dip(kUiHitMin);
+    const int x0 = m;
+    const int w0 = cw - m * 2;
+
+    auto title_fmt = make_format(15.f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    auto sub_fmt = make_format(13.f);
+    ComPtr<IDWriteTextLayout> title_layout;
+    ComPtr<IDWriteTextLayout> meta_layout;
+    ComPtr<IDWriteTextLayout> note_layout;
+    dwrite_->CreateTextLayout(tr(lang_, StringId::kSettingsTitle), static_cast<UINT32>(wcslen(tr(lang_, StringId::kSettingsTitle))),
+                              title_fmt.Get(), static_cast<FLOAT>(w0), 1000.f, title_layout.GetAddressOf());
+    wchar_t version_line[96];
+    swprintf_s(version_line, tr(lang_, StringId::kAboutVersionFmt), IMEAURA_VERSION);
+    std::wstring meta = version_line;
+    meta += L"\n";
+    meta += tr(lang_, StringId::kAboutCopyright);
+    dwrite_->CreateTextLayout(meta.c_str(), static_cast<UINT32>(meta.size()), sub_fmt.Get(), static_cast<FLOAT>(w0),
+                              1000.f, meta_layout.GetAddressOf());
+    const wchar_t* note = tr(lang_, StringId::kAboutLicenseNote);
+    dwrite_->CreateTextLayout(note, static_cast<UINT32>(wcslen(note)), sub_fmt.Get(), static_cast<FLOAT>(w0), 1000.f,
+                              note_layout.GetAddressOf());
+
+    DWRITE_TEXT_METRICS tm{};
+    float title_h = 22.f;
+    float meta_h = 36.f;
+    float note_h = 18.f;
+    if (title_layout) {
+      title_layout->GetMetrics(&tm);
+      title_h = tm.height;
+    }
+    if (meta_layout) {
+      meta_layout->GetMetrics(&tm);
+      meta_h = tm.height;
+    }
+    if (note_layout) {
+      note_layout->GetMetrics(&tm);
+      note_h = tm.height;
+    }
+
+    int y = m;
+    title_ = box(x0, y, w0, static_cast<int>(title_h));
+    y += static_cast<int>(title_h) + gap;
+    meta_ = box(x0, y, w0, static_cast<int>(meta_h));
+    y += static_cast<int>(meta_h) + gap;
+    note_ = box(x0, y, w0, static_cast<int>(note_h));
+    y += static_cast<int>(note_h) + sec;
+    rule_ = box(x0, y, w0, 1);
+    y += 1 + sec;
+
+    close_ = box(x0, ch - m - row, w0, row);
+    const int panel_bottom = close_.top - sec;
+    const int panel_h = std::max(0, panel_bottom - y);
+    license_panel_ = box(x0, y, w0, panel_h);
+
+    const int pad = dip(12);
+    const int sb_w = dip(kUiScrollBarWidth);
+    const int sb_gap = dip(4);
+    const int inner_w = std::max(0, w0 - pad * 2);
+    const int inner_h = std::max(0, panel_h - pad * 2);
+    const int body_w = std::max(0, inner_w - sb_w - sb_gap);
+    body_ = box(license_panel_.left + pad, license_panel_.top + pad, body_w, inner_h);
+    scroll_bar_ = box(body_.right + sb_gap, body_.top, sb_w, inner_h);
+    client_body_h_ = std::max(0, static_cast<int>(body_.bottom - body_.top));
   }
 
   void measure_body() {
     if (!dwrite_) return;
-    ComPtr<IDWriteTextFormat> fmt;
-    dwrite_->CreateTextFormat(L"Consolas", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-                              DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(dip(11)), L"en-us", fmt.GetAddressOf());
-    if (!fmt) {
-      dwrite_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-                                DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(dip(11)), L"en-us", fmt.GetAddressOf());
-    }
+    auto body_fmt = make_format(12.f);
     ComPtr<IDWriteTextLayout> layout;
-    dwrite_->CreateTextLayout(body_text_.c_str(), static_cast<UINT32>(body_text_.size()), fmt.Get(),
-                              static_cast<FLOAT>(body_.right - body_.left), 100000.f, layout.GetAddressOf());
+    dwrite_->CreateTextLayout(body_text_.c_str(), static_cast<UINT32>(body_text_.size()), body_fmt.Get(),
+                              static_cast<FLOAT>(std::max(1, static_cast<int>(body_.right - body_.left))), 100000.f,
+                              layout.GetAddressOf());
     DWRITE_TEXT_METRICS metrics{};
     if (layout) layout->GetMetrics(&metrics);
     content_h_ = static_cast<int>(metrics.height) + dip(8);
-    scroll_max_ = std::max(0, content_h_ - static_cast<int>(body_.bottom - body_.top));
+    scroll_max_ = std::max(0, content_h_ - client_body_h_);
     scroll_y_ = std::clamp(scroll_y_, 0, scroll_max_);
   }
 
@@ -253,11 +387,81 @@ class AboutDialogUi {
                        static_cast<float>(r.bottom));
   }
 
-  void draw_text(IDWriteTextFormat* fmt, const wchar_t* text, const D2D1_RECT_F& box, const D2D1_COLOR_F& color) {
+  void fill_round(const D2D1_RECT_F& r, float radius, const D2D1_COLOR_F& color) {
     ComPtr<ID2D1SolidColorBrush> brush;
     rt_->CreateSolidColorBrush(color, brush.GetAddressOf());
-    rt_->DrawTextW(text, static_cast<UINT32>(wcslen(text)), fmt, box, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP,
-                   DWRITE_MEASURING_MODE_NATURAL);
+    if (brush) rt_->FillRoundedRectangle(RoundRect(r, radius), brush.Get());
+  }
+
+  void draw_text(IDWriteTextFormat* fmt, const wchar_t* text, const D2D1_RECT_F& box, const D2D1_COLOR_F& color,
+                 DWRITE_TEXT_ALIGNMENT align_h = DWRITE_TEXT_ALIGNMENT_LEADING,
+                 DWRITE_PARAGRAPH_ALIGNMENT align_v = DWRITE_PARAGRAPH_ALIGNMENT_NEAR, bool wrap = true) {
+    if (!text || !fmt) return;
+    const float w = std::max(0.f, box.right - box.left);
+    const float h = std::max(0.f, box.bottom - box.top);
+    if (w <= 0.f || h <= 0.f) return;
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dwrite_->CreateTextLayout(text, static_cast<UINT32>(wcslen(text)), fmt, w, h, layout.GetAddressOf())) ||
+        !layout) {
+      return;
+    }
+    layout->SetWordWrapping(wrap ? DWRITE_WORD_WRAPPING_WRAP : DWRITE_WORD_WRAPPING_NO_WRAP);
+    layout->SetTextAlignment(align_h);
+    layout->SetParagraphAlignment(align_v);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    rt_->CreateSolidColorBrush(color, brush.GetAddressOf());
+    if (!brush) return;
+    rt_->PushAxisAlignedClip(box, D2D1_ANTIALIAS_MODE_ALIASED);
+    rt_->DrawTextLayout(D2D1::Point2F(box.left, box.top), layout.Get(), brush.Get());
+    rt_->PopAxisAlignedClip();
+  }
+
+  void paint_wash(float w, float h) {
+    ComPtr<ID2D1LinearGradientBrush> wash;
+    ComPtr<ID2D1GradientStopCollection> stops;
+    const D2D1_GRADIENT_STOP gs[] = {
+        {0.f, C(kDefaultColorJp, 28.f / 255.f)},
+        {0.42f, D2D1::ColorF(248 / 255.f, 249 / 255.f, 252 / 255.f, 0.f)},
+        {1.f, C(kDefaultColorEn, 28.f / 255.f)},
+    };
+    if (SUCCEEDED(rt_->CreateGradientStopCollection(gs, 3, stops.GetAddressOf()))) {
+      rt_->CreateLinearGradientBrush(D2D1::LinearGradientBrushProperties(D2D1::Point2F(0, 0), D2D1::Point2F(w, h)),
+                                     stops.Get(), wash.GetAddressOf());
+      if (wash) rt_->FillRectangle(D2D1::RectF(0, 0, w, h), wash.Get());
+    }
+  }
+
+  void paint_rule(const RECT& rc) {
+    ComPtr<ID2D1SolidColorBrush> brush;
+    rt_->CreateSolidColorBrush(C(kUiSeparator), brush.GetAddressOf());
+    if (brush) rt_->FillRectangle(r2f(rc), brush.Get());
+  }
+
+  void paint_button(const RECT& rc, const wchar_t* label, bool primary, bool hover) {
+    D2D1_COLOR_F fill = primary ? C(kDefaultColorEn) : C(kUiFill);
+    if (!primary && hover) fill = C(kUiFillHover);
+    if (primary && hover) fill = D2D1::ColorF(fill.r * 0.92f, fill.g * 0.92f, fill.b * 0.92f, fill.a);
+    fill_round(r2f(rc), static_cast<float>(dip(10)), fill);
+    auto fmt = make_format(13.f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    draw_text(fmt.Get(), label, r2f(rc), primary ? D2D1::ColorF(1, 1, 1, 1) : C(kUiText),
+              DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);
+  }
+
+  void paint_scroll_bar() {
+    if (scroll_max_ <= 0) return;
+    fill_round(r2f(scroll_bar_), 4.f, C(kUiFill));
+    const int track_h = scroll_bar_.bottom - scroll_bar_.top;
+    const int thumb_h = std::max(dip(24), track_h * client_body_h_ / std::max(content_h_, 1));
+    const int thumb_y = scroll_bar_.top + (track_h - thumb_h) * scroll_y_ / std::max(scroll_max_, 1);
+    ComPtr<ID2D1SolidColorBrush> thumb;
+    rt_->CreateSolidColorBrush(C(kUiTextSecondary, 0.55f), thumb.GetAddressOf());
+    if (!thumb) return;
+    rt_->FillRoundedRectangle(
+        D2D1::RoundedRect(D2D1::RectF(static_cast<float>(scroll_bar_.left + 2), static_cast<float>(thumb_y),
+                                      static_cast<float>(scroll_bar_.right - 2),
+                                      static_cast<float>(thumb_y + thumb_h)),
+                          4.f, 4.f),
+        thumb.Get());
   }
 
   void paint() {
@@ -268,86 +472,51 @@ class AboutDialogUi {
       return;
     }
     layout();
+    measure_body();
+
+    const float w = static_cast<float>(client_w_);
+    const float h = static_cast<float>(client_h_);
 
     rt_->BeginDraw();
-    rt_->Clear(UiColor(kUiBg));
+    rt_->Clear(C(kUiBg));
+    paint_wash(w, h);
 
-    ComPtr<IDWriteTextFormat> title_fmt;
-    dwrite_->CreateTextFormat(L"Yu Gothic UI", nullptr, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
-                              DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(dip(18)), L"ja-jp", title_fmt.GetAddressOf());
-    ComPtr<IDWriteTextFormat> meta_fmt;
-    dwrite_->CreateTextFormat(L"Yu Gothic UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-                              DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(dip(12)), L"ja-jp", meta_fmt.GetAddressOf());
-    ComPtr<IDWriteTextFormat> body_fmt;
-    dwrite_->CreateTextFormat(L"Consolas", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-                              DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(dip(11)), L"en-us", body_fmt.GetAddressOf());
-    if (!body_fmt) {
-      dwrite_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-                                DWRITE_FONT_STRETCH_NORMAL, static_cast<float>(dip(11)), L"en-us",
-                                body_fmt.GetAddressOf());
-    }
+    auto title_fmt = make_format(15.f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    auto sub_fmt = make_format(13.f);
+    auto body_fmt = make_format(12.f);
 
-    draw_text(title_fmt.Get(), L"IME Aura", D2D1::RectF(static_cast<float>(header_.left + dip(64)),
-                                                      static_cast<float>(header_.top),
-                                                      static_cast<float>(header_.right),
-                                                      static_cast<float>(header_.top + dip(28))),
-              UiColor(kUiText));
-    draw_text(meta_fmt.Get(), L"バージョン 1.0.0\nCopyright (c) 2026 Mac020k",
-              D2D1::RectF(static_cast<float>(header_.left + dip(64)), static_cast<float>(header_.top + dip(30)),
-                          static_cast<float>(header_.right), static_cast<float>(header_.top + dip(56))),
-              UiColor(kUiTextSecondary));
-    draw_text(meta_fmt.Get(),
-              L"本ソフトウェアは MIT License のもとで提供されています。\n"
-              L"Native C++ build (no Qt / no PySide6).",
-              D2D1::RectF(static_cast<float>(header_.left + dip(64)), static_cast<float>(header_.top + dip(62)),
-                          static_cast<float>(header_.right), static_cast<float>(header_.bottom)),
-              UiColor(kUiText));
+    draw_text(title_fmt.Get(), tr(lang_, StringId::kSettingsTitle), r2f(title_), C(kUiText));
+    wchar_t version_line[96];
+    swprintf_s(version_line, tr(lang_, StringId::kAboutVersionFmt), IMEAURA_VERSION);
+    std::wstring meta = version_line;
+    meta += L"\n";
+    meta += tr(lang_, StringId::kAboutCopyright);
+    draw_text(sub_fmt.Get(), meta.c_str(), r2f(meta_), C(kUiTextSecondary));
+    draw_text(sub_fmt.Get(), tr(lang_, StringId::kAboutLicenseNote), r2f(note_), C(kUiTextSecondary));
+    paint_rule(rule_);
 
-    ComPtr<ID2D1SolidColorBrush> sep;
-    rt_->CreateSolidColorBrush(UiColor(kUiSeparator), sep.GetAddressOf());
-    rt_->FillRectangle(D2D1::RectF(static_cast<float>(header_.left), static_cast<float>(header_.bottom),
-                                   static_cast<float>(header_.right), static_cast<float>(header_.bottom + 1)),
-                       sep.Get());
+    fill_round(r2f(license_panel_), static_cast<float>(dip(10)), C(kUiFill));
 
-    rt_->PushAxisAlignedClip(r2f(body_), D2D1_ANTIALIAS_MODE_ALIASED);
+    const D2D1_RECT_F clip = r2f(body_);
+    rt_->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_ALIASED);
     ComPtr<IDWriteTextLayout> layout;
     dwrite_->CreateTextLayout(body_text_.c_str(), static_cast<UINT32>(body_text_.size()), body_fmt.Get(),
-                              static_cast<FLOAT>(body_.right - body_.left), 100000.f, layout.GetAddressOf());
+                              static_cast<FLOAT>(std::max(1, static_cast<int>(body_.right - body_.left))), 100000.f,
+                              layout.GetAddressOf());
     if (layout) {
       ComPtr<ID2D1SolidColorBrush> body_brush;
-      rt_->CreateSolidColorBrush(UiColor(kUiText), body_brush.GetAddressOf());
-      rt_->DrawTextLayout(D2D1::Point2F(static_cast<FLOAT>(body_.left),
-                                        static_cast<FLOAT>(body_.top - scroll_y_)),
-                          layout.Get(), body_brush.Get());
+      rt_->CreateSolidColorBrush(C(kUiText), body_brush.GetAddressOf());
+      if (body_brush) {
+        rt_->DrawTextLayout(D2D1::Point2F(static_cast<FLOAT>(body_.left), static_cast<FLOAT>(body_.top - scroll_y_)),
+                            layout.Get(), body_brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+      }
     }
     rt_->PopAxisAlignedClip();
 
-    if (scroll_max_ > 0) {
-      ComPtr<ID2D1SolidColorBrush> track;
-      rt_->CreateSolidColorBrush(UiColor(kUiFill), track.GetAddressOf());
-      rt_->FillRoundedRectangle(D2D1::RoundedRect(r2f(scroll_bar_), 4.f, 4.f), track.Get());
-      const int track_h = scroll_bar_.bottom - scroll_bar_.top;
-      const int body_h = static_cast<int>(body_.bottom - body_.top);
-      const int thumb_h = std::max(dip(24), track_h * body_h / std::max(content_h_, 1));
-      const int thumb_y =
-          scroll_bar_.top + (track_h - thumb_h) * scroll_y_ / std::max(scroll_max_, 1);
-      ComPtr<ID2D1SolidColorBrush> thumb;
-      rt_->CreateSolidColorBrush(UiColor(kUiTextSecondary, 0.55f), thumb.GetAddressOf());
-      rt_->FillRoundedRectangle(
-          D2D1::RoundedRect(D2D1::RectF(static_cast<float>(scroll_bar_.left + 2), static_cast<float>(thumb_y),
-                                        static_cast<float>(scroll_bar_.right - 2),
-                                        static_cast<float>(thumb_y + thumb_h)),
-                            4.f, 4.f),
-          thumb.Get());
-    }
-
-    ComPtr<ID2D1SolidColorBrush> btn;
-    rt_->CreateSolidColorBrush(UiColor(kUiFill), btn.GetAddressOf());
-    rt_->FillRoundedRectangle(D2D1::RoundedRect(r2f(close_), static_cast<float>(dip(8)), static_cast<float>(dip(8))),
-                              btn.Get());
-    meta_fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    meta_fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    draw_text(meta_fmt.Get(), L"閉じる", r2f(close_), UiColor(kUiText));
+    rt_->PushAxisAlignedClip(r2f(license_panel_), D2D1_ANTIALIAS_MODE_ALIASED);
+    paint_scroll_bar();
+    rt_->PopAxisAlignedClip();
+    paint_button(close_, tr(lang_, StringId::kClose), true, hover_ == AboutHit::Close);
 
     const HRESULT hr = rt_->EndDraw();
     if (hr == D2DERR_RECREATE_TARGET) release_target();
@@ -356,11 +525,14 @@ class AboutDialogUi {
 
   HWND owner_ = nullptr;
   HWND hwnd_ = nullptr;
+  Lang lang_ = Lang::Ja;
   bool done_ = false;
   bool dragging_scroll_ = false;
+  AboutHit hover_ = AboutHit::None;
   int dpi_ = 96;
   int client_w_ = 0;
   int client_h_ = 0;
+  int client_body_h_ = 0;
   int content_h_ = 0;
   int scroll_y_ = 0;
   int scroll_max_ = 0;
@@ -370,7 +542,7 @@ class AboutDialogUi {
   ComPtr<ID2D1Factory> d2d_;
   ComPtr<IDWriteFactory> dwrite_;
   ComPtr<ID2D1HwndRenderTarget> rt_;
-  RECT header_{}, body_{}, scroll_bar_{}, close_{};
+  RECT title_{}, meta_{}, note_{}, rule_{}, license_panel_{}, body_{}, scroll_bar_{}, close_{};
 };
 
 }  // namespace

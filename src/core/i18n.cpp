@@ -87,6 +87,14 @@ const wchar_t* kJa[static_cast<size_t>(StringId::kCount)] = {
   L"\u30AD\u30E3\u30F3\u30BB\u30EB",
   L"\u8A2D\u5B9A\u3092\u958B\u304F",
   L"\u7D42\u4E86",
+  L"\u30D0\u30FC\u30B8\u30E7\u30F3\u60C5\u5831",
+  L"\u30D0\u30FC\u30B8\u30E7\u30F3 %s",
+  L"Copyright (c) 2026 Mac020k",
+  L"\u672C\u30BD\u30D5\u30C8\u30A6\u30A7\u30A2\u306F MIT License \u306E\u3082\u3068\u3067\u63D0\u4F9B\u3055\u308C\u3066\u3044\u307E\u3059\u3002",
+  L"LICENSE",
+  L"Third-Party Notices",
+  L"LICENSE / THIRD_PARTY_NOTICES \u3092\u8AAD\u307F\u8FBC\u3081\u307E\u305B\u3093\u3067\u3057\u305F",
+  L"\u9589\u3058\u308B",
 };
 
 const wchar_t* kEn[static_cast<size_t>(StringId::kCount)] = {
@@ -167,6 +175,14 @@ const wchar_t* kEn[static_cast<size_t>(StringId::kCount)] = {
   L"Cancel",
   L"Open Settings",
   L"Quit",
+  L"About",
+  L"Version %s",
+  L"Copyright (c) 2026 Mac020k",
+  L"This software is provided under the MIT License.",
+  L"LICENSE",
+  L"Third-Party Notices",
+  L"Could not load LICENSE / THIRD_PARTY_NOTICES",
+  L"Close",
 };
 
 const wchar_t* kZhHans[static_cast<size_t>(StringId::kCount)] = {
@@ -247,6 +263,14 @@ const wchar_t* kZhHans[static_cast<size_t>(StringId::kCount)] = {
   L"\u53D6\u6D88",
   L"\u6253\u5F00\u8BBE\u7F6E",
   L"\u9000\u51FA",
+  L"\u5173\u4E8E",
+  L"\u7248\u672C %s",
+  L"Copyright (c) 2026 Mac020k",
+  L"\u672C\u8F6F\u4EF6\u4F9D\u636E MIT License \u63D0\u4F9B\u3002",
+  L"LICENSE",
+  L"Third-Party Notices",
+  L"\u65E0\u6CD5\u52A0\u8F7D LICENSE / THIRD_PARTY_NOTICES",
+  L"\u5173\u95ED",
 };
 
 const wchar_t* kZhHant[static_cast<size_t>(StringId::kCount)] = {
@@ -327,6 +351,14 @@ const wchar_t* kZhHant[static_cast<size_t>(StringId::kCount)] = {
   L"\u53D6\u6D88",
   L"\u958B\u555F\u8A2D\u5B9A",
   L"\u7D50\u675F",
+  L"\u95DC\u65BC",
+  L"\u7248\u672C %s",
+  L"Copyright (c) 2026 Mac020k",
+  L"\u672C\u8EDF\u9AD4\u4F9D MIT License \u63D0\u4F9B\u3002",
+  L"LICENSE",
+  L"Third-Party Notices",
+  L"\u7121\u6CD5\u8F09\u5165 LICENSE / THIRD_PARTY_NOTICES",
+  L"\u95DC\u9589",
 };
 
 const wchar_t* kKo[static_cast<size_t>(StringId::kCount)] = {
@@ -407,6 +439,14 @@ const wchar_t* kKo[static_cast<size_t>(StringId::kCount)] = {
   L"\uCDE8\uC18C",
   L"\uC124\uC815 \uC5F4\uAE30",
   L"\uC885\uB8CC",
+  L"\uC815\uBCF4",
+  L"\uBC84\uC804 %s",
+  L"Copyright (c) 2026 Mac020k",
+  L"\uC774 \uC18C\uD504\uD2B8\uC6E8\uC5B4\uB294 MIT License \uD558\uC5D0 \uC81C\uACF5\uB429\uB2C8\uB2E4.",
+  L"LICENSE",
+  L"Third-Party Notices",
+  L"LICENSE / THIRD_PARTY_NOTICES\uB97C \uBD88\uB7EC\uC62C \uC218 \uC5C6\uC2B5\uB2C8\uB2E4",
+  L"\uB2EB\uAE30",
 };
 // clang-format on
 

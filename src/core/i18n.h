@@ -84,6 +84,14 @@ enum class StringId {
   kCancel,
   kTrayOpen,
   kTrayQuit,
+  kAboutDialogTitle,
+  kAboutVersionFmt,
+  kAboutCopyright,
+  kAboutLicenseNote,
+  kAboutLicenseHeading,
+  kAboutThirdPartyHeading,
+  kAboutLoadError,
+  kClose,
   kCount
 };
 
