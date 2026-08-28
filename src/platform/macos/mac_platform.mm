@@ -2,6 +2,7 @@
 
 #include "platform/firefly_host.h"
 #include "platform/macos/mac_ime.h"
+#include "platform/macos/mac_settings.h"
 
 #include <AppKit/AppKit.h>
 #include <CoreGraphics/CoreGraphics.h>
@@ -69,9 +70,31 @@ class MacEdges {
   CAGradientLayer* layers_[4]{nil, nil, nil, nil};
 };
 
+}  // namespace
+}  // namespace imeaura
+
+@interface IMEAuraStatusTarget : NSObject
+- (void)openSettings:(id)sender;
+- (void)quitApp:(id)sender;
+@end
+@implementation IMEAuraStatusTarget
+- (void)openSettings:(id)sender {
+  (void)sender;
+  imeaura::mac_settings::show();
+}
+- (void)quitApp:(id)sender {
+  (void)sender;
+  [NSApp terminate:nil];
+}
+@end
+
+namespace imeaura {
+namespace {
+
 MacEdges g_edges;
 Settings g_settings;
 NSStatusItem* g_status = nil;
+IMEAuraStatusTarget* g_status_target = nil;
 MacPlatformBackend* g_self = nullptr;
 FireflyHost g_firefly;
 
@@ -86,7 +109,7 @@ Rect primary_monitor_rect() {
 void refresh_policy() {
   if (!g_self) return;
   PolicyInput in{};
-  in.ime_japanese = mac_is_japanese_input();
+  in.ime_lang = mac_active_input_language();
   in.reduce_motion = g_self->prefers_reduced_motion();
   const auto policy = evaluate_policy(g_settings, in);
   g_self->apply_policy(g_settings, policy);
@@ -97,23 +120,45 @@ void refresh_policy() {
 bool MacPlatformBackend::init() {
   g_self = this;
   load_settings(g_settings);
-  g_firefly.set_on_toggle([] { refresh_policy(); });
+  g_firefly.set_on_toggle([] {
+    refresh_policy();
+    mac_settings::set_firefly_active(g_firefly.is_active());
+  });
   if (g_settings.firefly_enabled) {
     if (!g_firefly.apply(g_settings, g_settings)) {
       save_settings(g_settings);
     }
   }
+  mac_settings::create(g_settings, [this](const Settings& s) {
+    const bool was = g_settings.firefly_enabled;
+    g_settings = s;
+    save_settings(g_settings);
+    if (was != g_settings.firefly_enabled) {
+      g_firefly.apply(g_settings, g_settings);
+    }
+    mac_settings::set_firefly_active(g_firefly.is_active());
+    refresh_policy();
+  });
+  g_status_target = [[IMEAuraStatusTarget alloc] init];
   g_status = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
   g_status.button.title = @"IME";
+  NSMenu* menu = [[NSMenu alloc] init];
+  [menu addItemWithTitle:@"Open Settings" action:@selector(openSettings:) keyEquivalent:@""];
+  menu.itemArray.firstObject.target = g_status_target;
+  [menu addItemWithTitle:@"Quit" action:@selector(quitApp:) keyEquivalent:@"q"];
+  menu.itemArray.lastObject.target = g_status_target;
+  g_status.menu = menu;
   return true;
 }
 
 void MacPlatformBackend::shutdown() {
   g_firefly.shutdown();
+  mac_settings::destroy();
   if (g_status) {
     [[NSStatusBar systemStatusBar] removeStatusItem:g_status];
     g_status = nil;
   }
+  g_status_target = nil;
   g_self = nullptr;
 }
 
@@ -129,7 +174,7 @@ bool MacPlatformBackend::prefers_reduced_motion() {
   return [[NSWorkspace sharedWorkspace] accessibilityDisplayShouldReduceMotion];
 }
 
-bool MacPlatformBackend::is_japanese_input() { return mac_is_japanese_input(); }
+std::string MacPlatformBackend::active_input_language() { return mac_active_input_language(); }
 bool MacPlatformBackend::is_text_input_focused() { return false; }
 bool MacPlatformBackend::is_text_input_hovered() { return false; }
 Rect MacPlatformBackend::get_active_monitor_rect() { return primary_monitor_rect(); }
@@ -142,17 +187,18 @@ void MacPlatformBackend::apply_policy(const Settings& settings, const PolicyOutp
   g_edges.ensure(mon, settings.gradient_width, policy.target_color, opacity);
 }
 
-void MacPlatformBackend::show_settings_window() {}
-void MacPlatformBackend::hide_settings_window() {}
-bool MacPlatformBackend::settings_visible() const { return false; }
+void MacPlatformBackend::show_settings_window() { mac_settings::show(); }
+void MacPlatformBackend::hide_settings_window() { mac_settings::hide(); }
+bool MacPlatformBackend::settings_visible() const { return mac_settings::visible(); }
 
 ProbeState MacPlatformBackend::probe_state(const Settings& settings) {
   PolicyInput in{};
-  in.ime_japanese = is_japanese_input();
+  in.ime_lang = active_input_language();
   in.reduce_motion = prefers_reduced_motion();
   const auto p = evaluate_policy(settings, in);
   ProbeState st{};
-  st.ime_japanese = in.ime_japanese;
+  st.ime_lang = in.ime_lang;
+  st.ime_japanese = (in.ime_lang == "ja");
   st.visible = p.visible;
   st.monitor_rect = get_active_monitor_rect();
   return st;

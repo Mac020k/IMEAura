@@ -13,18 +13,13 @@ struct Value {
   bool bool_value = false;
   double number_value = 0;
   std::string string_value;
-  struct ArrayItem {
-    enum { Number, String } kind = Number;
-    double number = 0;
-    std::string str;
-  };
-  std::vector<ArrayItem> array_items;
+  std::vector<Value> elements;
   std::map<std::string, Value> object_entries;
 
   static Value make_bool(bool v);
   static Value make_number(double v);
   static Value make_string(std::string v);
-  static Value make_array(std::vector<ArrayItem> items);
+  static Value make_array(std::vector<Value> items);
   static Value make_object(std::map<std::string, Value> entries);
 
   const Value* find(std::string_view key) const;

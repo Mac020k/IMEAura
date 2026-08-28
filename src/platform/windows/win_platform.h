@@ -21,7 +21,7 @@ class WinPlatformBackend : public PlatformBackend {
   int run() override;
 
   bool prefers_reduced_motion() override;
-  bool is_japanese_input() override;
+  std::string active_input_language() override;
   bool is_text_input_focused() override;
   bool is_text_input_hovered() override;
   Rect get_active_monitor_rect() override;
@@ -51,6 +51,7 @@ class WinPlatformBackend : public PlatformBackend {
   void sync_text_watchers();
   void refresh_reduce_motion_cache();
   void adjust_poll_interval();
+  void apply_settings(const Settings& s);
 
   Settings settings_{};
   std::array<HWND, kEdgeHostCount> host_hwnds_{};

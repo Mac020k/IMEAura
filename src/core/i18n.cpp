@@ -1,5 +1,7 @@
 #include "core/i18n.h"
 
+#include "core/input_languages.h"
+
 #include <cstddef>
 
 namespace imeaura {
@@ -7,124 +9,393 @@ namespace {
 
 // clang-format off
 const wchar_t* kJa[static_cast<size_t>(StringId::kCount)] = {
-  L"IME Aura",                                   // kSettingsTitle
-  L"Aura",                                       // kTabAura
-  L"Firefly",                                    // kTabFirefly
-  L"\u4E00\u822C",                               // kTabGeneral
-  L"\u8272",                                     // kColorSection
-  L"\u30AF\u30EA\u30C3\u30AF\u3057\u3066\u753B\u9762\u7E01\u306E\u8272\u3092\u5909\u66F4\u3057\u307E\u3059", // kColorSub
-  L"\u65E5\u672C\u8A9E",                         // kColorJp
-  L"\u82F1\u8A9E",                               // kColorEn
-  L"\u30C7\u30D5\u30A9\u30EB\u30C8\u306E\u8272\u306B\u623B\u3059", // kColorReset
-  L"\u623B\u3057\u307E\u3057\u305F",             // kColorResetDone
-  L"\u30B0\u30E9\u30C7\u30FC\u30B7\u30E7\u30F3\u306E\u5E45", // kWidthSection
-  L"\u753B\u9762\u7E01\u306E\u5E2F\u306E\u539A\u3055 (1-100 px)", // kWidthSub
-  L"\u30C7\u30D5\u30A9\u30EB\u30C8\u306E\u5E45\u306B\u623B\u3059", // kWidthReset
-  L"\u623B\u3057\u307E\u3057\u305F",             // kWidthResetDone
-  L"\u30B0\u30E9\u30C7\u30FC\u30B7\u30E7\u30F3\u8868\u793A", // kDisplaySection
-  L"\u5E38\u306B\u8868\u793A",                   // kDisplayAlways
-  L"\u30C6\u30AD\u30B9\u30C8\u5165\u529B\u6642\u306E\u307F", // kDisplayFocus
-  L"\u975E\u8868\u793A",                         // kDisplayHidden
-  L"\u30C6\u30AD\u30B9\u30C8\u30DC\u30C3\u30AF\u30B9\u3078\u30DB\u30D0\u30FC\u6642\u3082\u8868\u793A", // kDisplayHover
-  L"\u6587\u5B57\u30B5\u30A4\u30BA",             // kFontSection
-  L"\u3053\u306E\u30A6\u30A3\u30F3\u30C9\u30A6\u306E\u6587\u5B57\u306E\u5927\u304D\u3055", // kFontSub
-  L"\u5C0F",                                     // kFontSmall
-  L"\u4E2D",                                     // kFontMedium
-  L"\u5927",                                     // kFontLarge
-  L"\u8A00\u8A9E",                               // kLangSection
-  L"\u65E5\u672C\u8A9E",                         // kLangJa
-  L"English",                                    // kLangEn
-  L"\u30D0\u30FC\u30B8\u30E7\u30F3\u60C5\u5831...", // kAbout
-  L"\u30A2\u30D7\u30EA\u30B1\u30FC\u30B7\u30E7\u30F3\u3092\u7D42\u4E86", // kQuit
-  L"IME Aura",                                   // kQuitConfirmTitle
-  L"IME Aura \u3092\u7D42\u4E86\u3057\u307E\u3059\u304B\uFF1F\n\u753B\u9762\u7E01\u306E\u30B0\u30E9\u30C7\u30FC\u30B7\u30E7\u30F3\u8868\u793A\u3082\u6D88\u3048\u307E\u3059\u3002", // kQuitConfirmBody
-  L"Firefly",                                    // kFireflyTitle
-  L"Firefly \u6A5F\u80FD\u3092\u6709\u52B9\u306B\u3059\u308B", // kFireflyEnable
-  L"\u5FDC\u7B54\u4E0D\u53EF",                   // kFireflyStateBusy
-  L"\u5FDC\u7B54\u53EF\u80FD",                   // kFireflyStateAvailable
-  L"CapsLock \u306E\u72B6\u614B",                // kFireflyCapsSection
-  L"\u6709\u52B9\u5316\u76F4\u524D\u306E\u72B6\u614B\u3092\u7DAD\u6301", // kFireflyCapsPreserve
-  L"\u5927\u6587\u5B57\u30D9\u30FC\u30B9",       // kFireflyCapsUppercase
-  L"\u5C0F\u6587\u5B57\u30D9\u30FC\u30B9",       // kFireflyCapsLowercase
-  L"CapsLock \u30AD\u30FC\u306E\u6A2A\u53D6\u308A: OK", // kFireflyCapsOk
-  L"LED \u5236\u5FA1: OK",                       // kFireflyLedOk
-  L"\u901A\u77E5\u6291\u5236: OK",               // kFireflyDndOk
-  L"\u3053\u306E\u74B0\u5883\u3067\u306F\u4E00\u90E8\u306E\u6A5F\u80FD\u304C\u5229\u7528\u3067\u304D\u307E\u305B\u3093", // kFireflyUnsupported
-  L"\u8272\u3092\u9078\u629E",                   // kColorDialogTitle
-  L"OK",                                         // kOk
-  L"\u30AD\u30E3\u30F3\u30BB\u30EB",             // kCancel
-  L"\u8A2D\u5B9A\u3092\u958B\u304F",             // kTrayOpen
-  L"\u7D42\u4E86",                               // kTrayQuit
+  L"IME Aura",
+  L"Aura",
+  L"Firefly",
+  L"\u4E00\u822C",
+  L"Aura",
+  L"\u753B\u9762\u7E01\u306B\u5165\u529B\u8A00\u8A9E\u306B\u5FDC\u3058\u305F\u30B0\u30E9\u30C7\u30FC\u30B7\u30E7\u30F3\u3092\u8868\u793A\u3057\u307E\u3059",
+  L"Aura \u3092\u6709\u52B9\u306B\u3059\u308B",
+  L"\u8272",
+  L"\u8A00\u8A9E\u3054\u3068\u306E\u753B\u9762\u7E01\u306E\u8272\u3092\u8A2D\u5B9A\u3057\u307E\u3059",
+  L"\u65E5\u672C\u8A9E",
+  L"\u82F1\u8A9E",
+  L"\u30C7\u30D5\u30A9\u30EB\u30C8\u306E\u8272\u306B\u623B\u3059",
+  L"\u623B\u3057\u307E\u3057\u305F",
+  L"\u8272\u3092\u8FFD\u52A0",
+  L"\u524A\u9664",
+  L"\u30B0\u30E9\u30C7\u30FC\u30B7\u30E7\u30F3\u306E\u5E45",
+  L"\u753B\u9762\u7E01\u306E\u5E2F\u306E\u539A\u3055 (1-100 px)",
+  L"\u30C7\u30D5\u30A9\u30EB\u30C8\u306E\u5E45\u306B\u623B\u3059",
+  L"\u623B\u3057\u307E\u3057\u305F",
+  L"\u30B0\u30E9\u30C7\u30FC\u30B7\u30E7\u30F3\u8868\u793A",
+  L"\u5E38\u306B\u8868\u793A",
+  L"\u30C6\u30AD\u30B9\u30C8\u5165\u529B\u6642\u306E\u307F",
+  L"\u975E\u8868\u793A",
+  L"\u30C6\u30AD\u30B9\u30C8\u30DC\u30C3\u30AF\u30B9\u3078\u30DB\u30D0\u30FC\u6642\u3082\u8868\u793A",
+  L"\u6587\u5B57\u30B5\u30A4\u30BA",
+  L"\u3053\u306E\u30A6\u30A3\u30F3\u30C9\u30A6\u306E\u6587\u5B57\u306E\u5927\u304D\u3055",
+  L"\u5C0F",
+  L"\u4E2D",
+  L"\u5927",
+  L"\u8A00\u8A9E",
+  L"\u8A00\u8A9E\u3092\u5909\u66F4",
+  L"\u623B\u308B",
+  L"\u65E5\u672C\u8A9E",
+  L"English",
+  L"\u7B80\u4F53\u4E2D\u6587",
+  L"\u7E41\u9AD4\u4E2D\u6587",
+  L"\uD55C\uAD6D\uC5B4",
+  L"Easy Quit",
+  L"\u30D0\u30FC\u30B8\u30E7\u30F3\u60C5\u5831...",
+  L"\u30A2\u30D7\u30EA\u30B1\u30FC\u30B7\u30E7\u30F3\u3092\u7D42\u4E86",
+  L"IME Aura",
+  L"IME Aura \u3092\u7D42\u4E86\u3057\u307E\u3059\u304B\uFF1F\n\u753B\u9762\u7E01\u306E\u30B0\u30E9\u30C7\u30FC\u30B7\u30E7\u30F3\u8868\u793A\u3082\u6D88\u3048\u307E\u3059\u3002",
+  L"Firefly",
+  L"CapsLock \u3092\u5FDC\u7B54\u53EF\u5426 (Available / Busy) \u306E\u5207\u66FF\u306B\u4F7F\u3044\u307E\u3059",
+  L"Firefly \u6A5F\u80FD\u3092\u6709\u52B9\u306B\u3059\u308B",
+  L"\u5FDC\u7B54\u4E0D\u53EF",
+  L"\u5FDC\u7B54\u53EF\u80FD",
+  L"CapsLock \u306E\u72B6\u614B",
+  L"\u6709\u52B9\u5316\u76F4\u524D\u306E\u72B6\u614B\u3092\u7DAD\u6301",
+  L"\u5927\u6587\u5B57\u30D9\u30FC\u30B9",
+  L"\u5C0F\u6587\u5B57\u30D9\u30FC\u30B9",
+  L"CapsLock \u30AD\u30FC\u306E\u6A2A\u53D6\u308A",
+  L"LED \u5236\u5FA1",
+  L"\u901A\u77E5\u6291\u5236",
+  L"\u3053\u306E\u74B0\u5883\u3067\u306F\u4E00\u90E8\u306E\u6A5F\u80FD\u304C\u5229\u7528\u3067\u304D\u307E\u305B\u3093",
+  L"\u8272\u3092\u9078\u629E",
+  L"RGB",
+  L"HSB",
+  L"\u30D7\u30EA\u30BB\u30C3\u30C8",
+  L"OK",
+  L"\u30AD\u30E3\u30F3\u30BB\u30EB",
+  L"\u8A2D\u5B9A\u3092\u958B\u304F",
+  L"\u7D42\u4E86",
 };
 
 const wchar_t* kEn[static_cast<size_t>(StringId::kCount)] = {
-  L"IME Aura",                                   // kSettingsTitle
-  L"Aura",                                       // kTabAura
-  L"Firefly",                                    // kTabFirefly
-  L"General",                                    // kTabGeneral
-  L"Color",                                      // kColorSection
-  L"Click to change the screen edge color",      // kColorSub
-  L"Japanese",                                   // kColorJp
-  L"English",                                    // kColorEn
-  L"Reset to default colors",                    // kColorReset
-  L"Reset",                                      // kColorResetDone
-  L"Gradient Width",                             // kWidthSection
-  L"Screen edge thickness (1-100 px)",           // kWidthSub
-  L"Reset to default width",                     // kWidthReset
-  L"Reset",                                      // kWidthResetDone
-  L"Gradient Display",                           // kDisplaySection
-  L"Always show",                                // kDisplayAlways
-  L"Only when text input is focused",            // kDisplayFocus
-  L"Hidden",                                     // kDisplayHidden
-  L"Also show when hovering over text boxes",    // kDisplayHover
-  L"Font Size",                                  // kFontSection
-  L"Text size in this window",                   // kFontSub
-  L"S",                                          // kFontSmall
-  L"M",                                          // kFontMedium
-  L"L",                                          // kFontLarge
-  L"Language",                                   // kLangSection
-  L"\u65E5\u672C\u8A9E",                         // kLangJa
-  L"English",                                    // kLangEn
-  L"About...",                                   // kAbout
-  L"Quit Application",                           // kQuit
-  L"IME Aura",                                   // kQuitConfirmTitle
-  L"Quit IME Aura?\nThe screen edge gradient will also disappear.", // kQuitConfirmBody
-  L"Firefly",                                    // kFireflyTitle
-  L"Enable Firefly",                             // kFireflyEnable
-  L"Do Not Disturb",                             // kFireflyStateBusy
-  L"Available",                                  // kFireflyStateAvailable
-  L"CapsLock state",                             // kFireflyCapsSection
-  L"Keep state before enabling",                 // kFireflyCapsPreserve
-  L"Uppercase base",                             // kFireflyCapsUppercase
-  L"Lowercase base",                             // kFireflyCapsLowercase
-  L"CapsLock interception: OK",                  // kFireflyCapsOk
-  L"LED control: OK",                            // kFireflyLedOk
-  L"Notification suppression: OK",               // kFireflyDndOk
-  L"Some features are unavailable on this system", // kFireflyUnsupported
-  L"Choose Color",                               // kColorDialogTitle
-  L"OK",                                         // kOk
-  L"Cancel",                                     // kCancel
-  L"Open Settings",                              // kTrayOpen
-  L"Quit",                                       // kTrayQuit
+  L"IME Aura",
+  L"Aura",
+  L"Firefly",
+  L"General",
+  L"Aura",
+  L"Shows a screen-edge gradient for the active input language",
+  L"Enable Aura",
+  L"Color",
+  L"Assign an edge color per input language",
+  L"Japanese",
+  L"English",
+  L"Reset to default colors",
+  L"Reset",
+  L"Add color",
+  L"Remove",
+  L"Gradient Width",
+  L"Screen edge thickness (1-100 px)",
+  L"Reset to default width",
+  L"Reset",
+  L"Gradient Display",
+  L"Always show",
+  L"Only when text input is focused",
+  L"Hidden",
+  L"Also show when hovering over text boxes",
+  L"Font Size",
+  L"Text size in this window",
+  L"S",
+  L"M",
+  L"L",
+  L"Language",
+  L"Change language",
+  L"Back",
+  L"\u65E5\u672C\u8A9E",
+  L"English",
+  L"\u7B80\u4F53\u4E2D\u6587",
+  L"\u7E41\u9AD4\u4E2D\u6587",
+  L"\uD55C\uAD6D\uC5B4",
+  L"Easy Quit",
+  L"About...",
+  L"Quit Application",
+  L"IME Aura",
+  L"Quit IME Aura?\nThe screen edge gradient will also disappear.",
+  L"Firefly",
+  L"Use CapsLock as an Available / Busy toggle",
+  L"Enable Firefly",
+  L"Do Not Disturb",
+  L"Available",
+  L"CapsLock state",
+  L"Keep state before enabling",
+  L"Uppercase base",
+  L"Lowercase base",
+  L"CapsLock interception",
+  L"LED control",
+  L"Notification suppression",
+  L"Some features are unavailable on this system",
+  L"Choose Color",
+  L"RGB",
+  L"HSB",
+  L"Presets",
+  L"OK",
+  L"Cancel",
+  L"Open Settings",
+  L"Quit",
+};
+
+const wchar_t* kZhHans[static_cast<size_t>(StringId::kCount)] = {
+  L"IME Aura",
+  L"Aura",
+  L"Firefly",
+  L"\u4E00\u822C",
+  L"Aura",
+  L"\u6839\u636E\u5F53\u524D\u8F93\u5165\u8BED\u8A00\u5728\u5C4F\u5E55\u8FB9\u7F18\u663E\u793A\u6E10\u53D8",
+  L"\u542F\u7528 Aura",
+  L"\u989C\u8272",
+  L"\u4E3A\u6BCF\u79CD\u8F93\u5165\u8BED\u8A00\u8BBE\u7F6E\u5C4F\u5E55\u8FB9\u7F18\u989C\u8272",
+  L"\u65E5\u8BED",
+  L"\u82F1\u8BED",
+  L"\u6062\u590D\u9ED8\u8BA4\u989C\u8272",
+  L"\u5DF2\u6062\u590D",
+  L"\u6DFB\u52A0\u989C\u8272",
+  L"\u5220\u9664",
+  L"\u6E10\u53D8\u5BBD\u5EA6",
+  L"\u5C4F\u5E55\u8FB9\u7F18\u539A\u5EA6 (1-100 px)",
+  L"\u6062\u590D\u9ED8\u8BA4\u5BBD\u5EA6",
+  L"\u5DF2\u6062\u590D",
+  L"\u6E10\u53D8\u663E\u793A",
+  L"\u59CB\u7EC8\u663E\u793A",
+  L"\u4EC5\u5728\u6587\u672C\u8F93\u5165\u65F6",
+  L"\u9690\u85CF",
+  L"\u60AC\u505C\u5728\u6587\u672C\u6846\u4E0A\u65F6\u4E5F\u663E\u793A",
+  L"\u5B57\u53F7",
+  L"\u6B64\u7A97\u53E3\u4E2D\u7684\u6587\u5B57\u5927\u5C0F",
+  L"\u5C0F",
+  L"\u4E2D",
+  L"\u5927",
+  L"\u8BED\u8A00",
+  L"\u66F4\u6539\u8BED\u8A00",
+  L"\u8FD4\u56DE",
+  L"\u65E5\u8BED",
+  L"English",
+  L"\u7B80\u4F53\u4E2D\u6587",
+  L"\u7E41\u9AD4\u4E2D\u6587",
+  L"\uD55C\uAD6D\uC5B4",
+  L"Easy Quit",
+  L"\u5173\u4E8E...",
+  L"\u9000\u51FA\u5E94\u7528",
+  L"IME Aura",
+  L"\u9000\u51FA IME Aura\uFF1F\n\u5C4F\u5E55\u8FB9\u7F18\u6E10\u53D8\u4E5F\u4F1A\u6D88\u5931\u3002",
+  L"Firefly",
+  L"\u5C06 CapsLock \u7528\u4F5C\u53EF\u7528 / \u52FF\u6270\u5207\u6362",
+  L"\u542F\u7528 Firefly",
+  L"\u52FF\u6270",
+  L"\u53EF\u7528",
+  L"CapsLock \u72B6\u6001",
+  L"\u4FDD\u6301\u542F\u7528\u524D\u7684\u72B6\u6001",
+  L"\u5927\u5199\u57FA\u51C6",
+  L"\u5C0F\u5199\u57FA\u51C6",
+  L"CapsLock \u62E6\u622A",
+  L"LED \u63A7\u5236",
+  L"\u901A\u77E5\u6291\u5236",
+  L"\u6B64\u73AF\u5883\u4E0B\u90E8\u5206\u529F\u80FD\u4E0D\u53EF\u7528",
+  L"\u9009\u62E9\u989C\u8272",
+  L"RGB",
+  L"HSB",
+  L"\u9884\u8BBE",
+  L"\u786E\u5B9A",
+  L"\u53D6\u6D88",
+  L"\u6253\u5F00\u8BBE\u7F6E",
+  L"\u9000\u51FA",
+};
+
+const wchar_t* kZhHant[static_cast<size_t>(StringId::kCount)] = {
+  L"IME Aura",
+  L"Aura",
+  L"Firefly",
+  L"\u4E00\u822C",
+  L"Aura",
+  L"\u4F9D\u64DA\u7576\u524D\u8F38\u5165\u8A9E\u8A00\u5728\u87A2\u5E55\u908A\u7DE3\u986F\u793A\u6F38\u5C64",
+  L"\u555F\u7528 Aura",
+  L"\u984F\u8272",
+  L"\u70BA\u6BCF\u7A2E\u8F38\u5165\u8A9E\u8A00\u8A2D\u5B9A\u87A2\u5E55\u908A\u7DE3\u984F\u8272",
+  L"\u65E5\u8A9E",
+  L"\u82F1\u8A9E",
+  L"\u6062\u5FA9\u9810\u8A2D\u984F\u8272",
+  L"\u5DF2\u6062\u5FA9",
+  L"\u65B0\u589E\u984F\u8272",
+  L"\u522A\u9664",
+  L"\u6F38\u5C64\u5BEC\u5EA6",
+  L"\u87A2\u5E55\u908A\u7DE3\u539A\u5EA6 (1-100 px)",
+  L"\u6062\u5FA9\u9810\u8A2D\u5BEC\u5EA6",
+  L"\u5DF2\u6062\u5FA9",
+  L"\u6F38\u5C64\u986F\u793A",
+  L"\u59CB\u7D42\u986F\u793A",
+  L"\u50C5\u5728\u6587\u5B57\u8F38\u5165\u6642",
+  L"\u96B1\u85CF",
+  L"\u6ED1\u9F20\u505C\u7559\u6587\u5B57\u6846\u6642\u4E5F\u986F\u793A",
+  L"\u5B57\u578B\u5927\u5C0F",
+  L"\u6B64\u8996\u7A97\u4E2D\u7684\u6587\u5B57\u5927\u5C0F",
+  L"\u5C0F",
+  L"\u4E2D",
+  L"\u5927",
+  L"\u8A9E\u8A00",
+  L"\u8B8A\u66F4\u8A9E\u8A00",
+  L"\u8FD4\u56DE",
+  L"\u65E5\u8A9E",
+  L"English",
+  L"\u7B80\u4F53\u4E2D\u6587",
+  L"\u7E41\u9AD4\u4E2D\u6587",
+  L"\uD55C\uAD6D\uC5B4",
+  L"Easy Quit",
+  L"\u95DC\u65BC...",
+  L"\u7D50\u675F\u61C9\u7528\u7A0B\u5F0F",
+  L"IME Aura",
+  L"\u7D50\u675F IME Aura\uFF1F\n\u87A2\u5E55\u908A\u7DE3\u6F38\u5C64\u4E5F\u6703\u6D88\u5931\u3002",
+  L"Firefly",
+  L"\u5C07 CapsLock \u7528\u4F5C\u53EF\u7528 / \u52FF\u64FE\u5207\u63DB",
+  L"\u555F\u7528 Firefly",
+  L"\u52FF\u64FE",
+  L"\u53EF\u7528",
+  L"CapsLock \u72C0\u614B",
+  L"\u4FDD\u7559\u555F\u7528\u524D\u7684\u72C0\u614B",
+  L"\u5927\u5BEB\u57FA\u6E96",
+  L"\u5C0F\u5BEB\u57FA\u6E96",
+  L"CapsLock \u62E6\u622A",
+  L"LED \u63A7\u5236",
+  L"\u901A\u77E5\u6291\u5236",
+  L"\u6B64\u74B0\u5883\u4E0B\u90E8\u5206\u529F\u80FD\u4E0D\u53EF\u7528",
+  L"\u9078\u64C7\u984F\u8272",
+  L"RGB",
+  L"HSB",
+  L"\u9810\u8A2D",
+  L"\u78BA\u5B9A",
+  L"\u53D6\u6D88",
+  L"\u958B\u555F\u8A2D\u5B9A",
+  L"\u7D50\u675F",
+};
+
+const wchar_t* kKo[static_cast<size_t>(StringId::kCount)] = {
+  L"IME Aura",
+  L"Aura",
+  L"Firefly",
+  L"\uC77C\uBC18",
+  L"Aura",
+  L"\uD65C\uC131 \uC785\uB825 \uC5B8\uC5B4\uC5D0 \uB9DE\uB294 \uD654\uBA74 \uAC00\uC7A5\uC790\uB9AC \uADF8\uB77C\uB370\uC774\uC158\uC744 \uD45C\uC2DC\uD569\uB2C8\uB2E4",
+  L"Aura \uC0AC\uC6A9",
+  L"\uC0C9\uC0C1",
+  L"\uC785\uB825 \uC5B8\uC5B4\uBCC4 \uD654\uBA74 \uAC00\uC7A5\uC790\uB9AC \uC0C9\uC744 \uC124\uC815\uD569\uB2C8\uB2E4",
+  L"\uC77C\uBCF8\uC5B4",
+  L"\uC601\uC5B4",
+  L"\uAE30\uBCF8 \uC0C9\uC73C\uB85C \uB418\uB3CC\uB9AC\uAE30",
+  L"\uB418\uB3CC\uB9BC",
+  L"\uC0C9 \uCD94\uAC00",
+  L"\uC0AD\uC81C",
+  L"\uADF8\uB77C\uB370\uC774\uC158 \uB108\uBE44",
+  L"\uD654\uBA74 \uAC00\uC7A5\uC790\uB9AC \uB450\uAED8 (1-100 px)",
+  L"\uAE30\uBCF8 \uB108\uBE44\uB85C \uB418\uB3CC\uB9AC\uAE30",
+  L"\uB418\uB3CC\uB9BC",
+  L"\uADF8\uB77C\uB370\uC774\uC158 \uD45C\uC2DC",
+  L"\uD56D\uC0C1 \uD45C\uC2DC",
+  L"\uD14D\uC2A4\uD2B8 \uC785\uB825 \uC911\uC5D0\uB9CC",
+  L"\uC228\uAE40",
+  L"\uD14D\uC2A4\uD2B8 \uC0C1\uC790\uC5D0 \uB9C8\uC6B0\uC2A4\uB97C \uC62C\uB824\uB3C4 \uD45C\uC2DC",
+  L"\uAE00\uAF34 \uD06C\uAE30",
+  L"\uC774 \uCC3D\uC758 \uAE00\uC790 \uD06C\uAE30",
+  L"\uC18C",
+  L"\uC911",
+  L"\uB300",
+  L"\uC5B8\uC5B4",
+  L"\uC5B8\uC5B4 \uBCC0\uACBD",
+  L"\uB4A4\uB85C",
+  L"\uC77C\uBCF8\uC5B4",
+  L"English",
+  L"\u7B80\u4F53\u4E2D\u6587",
+  L"\u7E41\u9AD4\u4E2D\u6587",
+  L"\uD55C\uAD6D\uC5B4",
+  L"Easy Quit",
+  L"\uC815\uBCF4...",
+  L"\uC571 \uC885\uB8CC",
+  L"IME Aura",
+  L"IME Aura\uB97C \uC885\uB8CC\uD560\uAE4C\uC694?\n\uD654\uBA74 \uAC00\uC7A5\uC790\uB9AC \uADF8\uB77C\uB370\uC774\uC158\uB3C4 \uC0AC\uB77C\uC9D1\uB2C8\uB2E4.",
+  L"Firefly",
+  L"CapsLock\uB97C \uC0AC\uC6A9 \uAC00\uB2A5 / \uBC29\uD574 \uAE08\uC9C0 \uC804\uD658\uC5D0 \uC0AC\uC6A9\uD569\uB2C8\uB2E4",
+  L"Firefly \uC0AC\uC6A9",
+  L"\uBC29\uD574 \uAE08\uC9C0",
+  L"\uC0AC\uC6A9 \uAC00\uB2A5",
+  L"CapsLock \uC0C1\uD0DC",
+  L"\uD65C\uC131\uD654 \uC804 \uC0C1\uD0DC \uC720\uC9C0",
+  L"\uB300\uBB38\uC790 \uAE30\uC900",
+  L"\uC18C\uBB38\uC790 \uAE30\uC900",
+  L"CapsLock \uC778\uD130\uC149\uD2B8",
+  L"LED \uC81C\uC5B4",
+  L"\uC54C\uB9BC \uC5B5\uC81C",
+  L"\uC774 \uD658\uACBD\uC5D0\uC11C\uB294 \uC77C\uBD80 \uAE30\uB2A5\uC744 \uC0AC\uC6A9\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4",
+  L"\uC0C9 \uC120\uD0DD",
+  L"RGB",
+  L"HSB",
+  L"\uD504\uB9AC\uC14B",
+  L"\uD655\uC778",
+  L"\uCDE8\uC18C",
+  L"\uC124\uC815 \uC5F4\uAE30",
+  L"\uC885\uB8CC",
 };
 // clang-format on
+
+const wchar_t* const* table_for(Lang lang) {
+  switch (lang) {
+    case Lang::En:
+      return kEn;
+    case Lang::ZhHans:
+      return kZhHans;
+    case Lang::ZhHant:
+      return kZhHant;
+    case Lang::Ko:
+      return kKo;
+    case Lang::Ja:
+    default:
+      return kJa;
+  }
+}
 
 }  // namespace
 
 const wchar_t* tr(Lang lang, StringId id) {
   const auto idx = static_cast<size_t>(id);
   if (idx >= static_cast<size_t>(StringId::kCount)) return L"";
-  if (lang == Lang::En && kEn[idx]) return kEn[idx];
-  return kJa[idx] ? kJa[idx] : L"";
+  const wchar_t* const* table = table_for(lang);
+  if (table[idx] && table[idx][0] != L'\0') return table[idx];
+  return kEn[idx] ? kEn[idx] : L"";
 }
 
 Lang lang_from_key(const std::string& key) {
-  if (key == "en") return Lang::En;
-  return Lang::Ja;
+  if (key == kInputEn) return Lang::En;
+  if (key == kInputZhHans) return Lang::ZhHans;
+  if (key == kInputZhHant) return Lang::ZhHant;
+  if (key == kInputKo) return Lang::Ko;
+  if (key == kInputJa) return Lang::Ja;
+  return Lang::En;
 }
 
 const wchar_t* lang_font_family(Lang lang) {
-  return (lang == Lang::En) ? L"Segoe UI" : L"Yu Gothic UI";
+  switch (lang) {
+    case Lang::En:
+      return L"Segoe UI";
+    case Lang::ZhHans:
+      return L"Microsoft YaHei UI";
+    case Lang::ZhHant:
+      return L"Microsoft JhengHei UI";
+    case Lang::Ko:
+      return L"Malgun Gothic";
+    case Lang::Ja:
+    default:
+      return L"Yu Gothic UI";
+  }
+}
+
+StringId string_id_for_ui_lang(const std::string& key) {
+  if (key == kInputEn) return StringId::kLangEn;
+  if (key == kInputZhHans) return StringId::kLangZhHans;
+  if (key == kInputZhHant) return StringId::kLangZhHant;
+  if (key == kInputKo) return StringId::kLangKo;
+  return StringId::kLangJa;
 }
 
 }  // namespace imeaura

@@ -3,6 +3,7 @@ add_library(imeaura_core STATIC
   core/settings.cpp
   core/policy.cpp
   core/i18n.cpp
+  core/input_languages.cpp
   core/firefly.cpp
 )
 target_include_directories(imeaura_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -36,9 +37,10 @@ if(WIN32)
     target_link_options(IMEAura PRIVATE /ENTRY:mainCRTStartup)
     set_property(TARGET imeaura_core PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   endif()
-  add_custom_command(TARGET IMEAura POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/img"
-            "$<TARGET_FILE_DIR:IMEAura>/img"
-    COMMENT "Copy img assets next to IMEAura.exe")
 endif()
+
+add_custom_command(TARGET IMEAura POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+          "${CMAKE_SOURCE_DIR}/img"
+          "$<TARGET_FILE_DIR:IMEAura>/img"
+  COMMENT "Copy img assets next to IMEAura")

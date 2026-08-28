@@ -6,7 +6,7 @@
 
 [日本語](README-ja.md)
 
-**IME Aura** is a lightweight desktop utility that draws a subtle edge gradient on your display to show whether IME input is Japanese or English. It helps you avoid typing in the wrong input mode.
+**IME Aura** is a lightweight desktop utility that draws a subtle edge gradient on your display to show the active IME / input language (Japanese, Chinese, Korean, or Latin). It helps you avoid typing in the wrong input mode.
 
 The app is a native **C++20** project. Overlays and settings UIs use each OS’s native APIs.
 
@@ -21,9 +21,13 @@ The app is a native **C++20** project. Overlays and settings UIs use each OS’s
 - Real-time IME state detection via platform APIs
 - Click-through edge overlay (always on top)
 - Multi-monitor follow (active window; cursor when hover-only)
-- Custom JP / EN colors with alpha; gradient width 1–100 px
-- Display modes: Always / Only while typing / Hidden (+ optional hover)
-- Tabbed settings (Aura / Firefly / General) with Japanese and English UI
+- Custom per-language edge colors (up to 7 slots; Aura IDs: ja / zh-Hans / zh-Hant / ko / en + vi / th / km / my / lo); gradient width 1–100 px
+- Display modes: Always / Only while typing (+ optional hover); Aura enable toggle
+- Tabbed settings (Aura / Firefly / General) with UI in Japanese, English, Simplified/Traditional Chinese, and Korean
+- Language picker page under General; Aura color rows use language dropdowns
+- Icon affordances for Aura color add (plus) / remove (trash) and language-picker Back (chevron), with localized labels / tooltips where the OS supports them
+- Windows color picker: RGB/HSB modes, hex + numeric text entry, and default-color presets
+- Catalog of future IME languages: [docs/ime-languages.md](docs/ime-languages.md)
 - Tray / menu-bar icon — closing settings hides the window; the app keeps running
 - **Firefly**: CapsLock as Available / Busy (Do Not Disturb) with LED + notification suppression (Windows, macOS, Linux/X11)
 
@@ -109,15 +113,19 @@ Stored as JSON (`src/core/settings.{h,cpp}`):
 
 | Key | Values | Default |
 | --- | --- | --- |
-| `color_jp` / `color_en` | `[r,g,b,a]` 0–255 | JP reddish / EN blue |
-| `display_mode` | `always` \| `on_focus` \| `hidden` | `always` |
+| `aura_colors` | `[{"lang":"ja\|zh-Hans\|zh-Hant\|ko\|en\|vi\|th\|km\|my\|lo","color":[r,g,b,a]}, …]` (2–7) | ja + en defaults |
+| `color_jp` / `color_en` | `[r,g,b,a]` 0–255 | Written for compatibility; prefer `aura_colors` |
+| `aura_enabled` | bool | `true` |
+| `display_mode` | `always` \| `on_focus` | `always` |
 | `show_on_hover` | bool (only with `on_focus`) | `false` |
 | `ui_font_size` | `small` \| `medium` \| `large` | `medium` |
 | `gradient_width` | 1–100 | `15` |
-| `language` | `ja` \| `en` | `ja` |
+| `language` | `ja` \| `en` \| `zh-Hans` \| `zh-Hant` \| `ko` | `ja` |
 | `firefly_enabled` | bool | `false` |
 | `firefly_caps_mode` | `preserve` \| `uppercase` \| `lowercase` | `uppercase` |
 | `firefly_led_mode` | `auto` \| `hid` \| `none` | `auto` |
+
+When adding a color slot beyond the default ja/en pair, default colors are applied in order: `#16CC7B`, `#F1D60F`, `#E6690C`, `#7E43D5`, `#636363`.
 
 ## Firefly (Windows, macOS, Linux/X11)
 

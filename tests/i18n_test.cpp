@@ -16,21 +16,32 @@ static int failures = 0;
 
 int main() {
   const auto count = static_cast<size_t>(StringId::kCount);
+  const Lang langs[] = {Lang::Ja, Lang::En, Lang::ZhHans, Lang::ZhHant, Lang::Ko};
 
-  for (size_t i = 0; i < count; ++i) {
-    const auto id = static_cast<StringId>(i);
-    const wchar_t* ja = tr(Lang::Ja, id);
-    const wchar_t* en = tr(Lang::En, id);
-    EXPECT(ja != nullptr && ja[0] != L'\0');
-    EXPECT(en != nullptr && en[0] != L'\0');
+  for (Lang lang : langs) {
+    for (size_t i = 0; i < count; ++i) {
+      const auto id = static_cast<StringId>(i);
+      const wchar_t* s = tr(lang, id);
+      EXPECT(s != nullptr && s[0] != L'\0');
+    }
   }
 
   EXPECT(lang_from_key("ja") == Lang::Ja);
   EXPECT(lang_from_key("en") == Lang::En);
-  EXPECT(lang_from_key("fr") == Lang::Ja);
+  EXPECT(lang_from_key("zh-Hans") == Lang::ZhHans);
+  EXPECT(lang_from_key("zh-Hant") == Lang::ZhHant);
+  EXPECT(lang_from_key("ko") == Lang::Ko);
+  EXPECT(lang_from_key("fr") == Lang::En);
 
   EXPECT(lang_font_family(Lang::Ja) != nullptr);
   EXPECT(lang_font_family(Lang::En) != nullptr);
+  EXPECT(lang_font_family(Lang::Ko) != nullptr);
+
+  EXPECT(string_id_for_ui_lang("zh-Hans") == StringId::kLangZhHans);
+
+  EXPECT(wcscmp(tr(Lang::En, StringId::kFontSmall), L"S") == 0);
+  EXPECT(wcscmp(tr(Lang::Ja, StringId::kFontSmall), L"\u5C0F") == 0);
+  EXPECT(wcscmp(tr(Lang::Ko, StringId::kFontMedium), L"\uC911") == 0);
 
   if (failures) return 1;
   std::cout << "i18n_test: OK\n";

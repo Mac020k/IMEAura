@@ -9,7 +9,7 @@ PolicyOutput evaluate_policy(const Settings& settings, const PolicyInput& input)
   out.focused = input.text_focused;
   out.hovered = input.text_hovered;
 
-  if (settings.display_mode == kDisplayModeHidden) {
+  if (!settings.aura_enabled) {
     out.visible = false;
     out.follow = FollowTarget::ActiveWindow;
   } else if (settings.display_mode == kDisplayModeAlways) {
@@ -25,7 +25,7 @@ PolicyOutput evaluate_policy(const Settings& settings, const PolicyInput& input)
     }
   }
 
-  out.target_color = input.ime_japanese ? settings.color_jp : settings.color_en;
+  out.target_color = settings.color_for_lang(input.ime_lang);
   out.fade_ms = motion_ms(kFadeMs, input.reduce_motion);
   out.blend_ms = motion_ms(kStatusBlendMs, input.reduce_motion);
   return out;

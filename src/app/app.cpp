@@ -24,6 +24,7 @@ int App::run() {
     const auto state = backend->probe_state(settings_);
     if (options_.probe_json) {
       std::cout << "{"
+                << "\"ime_lang\":\"" << state.ime_lang << "\","
                 << "\"ime_japanese\":" << (state.ime_japanese ? "true" : "false") << ","
                 << "\"focused\":" << (state.text_focused ? "true" : "false") << ","
                 << "\"hovered\":" << (state.text_hovered ? "true" : "false") << ","
