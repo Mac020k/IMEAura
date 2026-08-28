@@ -124,7 +124,8 @@ Stored as JSON (`src/core/settings.{h,cpp}`):
 | `firefly_enabled` | bool | `false` |
 | `firefly_caps_mode` | `preserve` \| `uppercase` \| `lowercase` | `uppercase` |
 | `firefly_led_mode` | `auto` \| `hid` \| `none` | `auto` |
-| `firefly_busy_action` | `dnd` \| `keep_awake` \| `voice_input` \| `meeting` \| `hands_free` | `dnd` |
+| `firefly_busy_action` | `dnd` \| `keep_awake` \| `voice_input` \| `audio_mute` \| `custom_key` | `dnd` |
+| `firefly_custom_vk` | int (Windows VK, for `custom_key`) | `0` |
 | `firefly_keep_display_on` | bool (only with `keep_awake`) | `false` |
 
 When adding a color slot beyond the default ja/en pair, default colors are applied in order: `#16CC7B`, `#F1D60F`, `#E6690C`, `#7E43D5`, `#636363`.
@@ -138,7 +139,7 @@ Firefly remaps the physical **CapsLock** key to an Available / Busy toggle while
 | **Available** | Default after enable | Off |
 | **Busy** | After CapsLock press | On |
 
-Busy actions include notification suppression (`dnd`), sleep prevention (`keep_awake`), voice typing (`voice_input`), meeting mode (`meeting`), and hands-free writing (`hands_free`). See [docs/firefly.md](docs/firefly.md) for platform support.
+Busy actions include notification suppression (`dnd`), sleep prevention (`keep_awake`), voice typing (`voice_input`), audio mute (`audio_mute`), and custom key press (`custom_key`). See [docs/firefly.md](docs/firefly.md) for platform support.
 
 - Enabling Firefly always starts in **Available**.
 - Each CapsLock press toggles Available ↔ Busy.

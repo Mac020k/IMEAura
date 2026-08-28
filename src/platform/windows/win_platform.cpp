@@ -57,7 +57,8 @@ bool StartFirefly(const Settings& settings) {
     return false;
   }
   g_firefly->set_led_mode(settings.firefly_led_mode);
-  g_firefly->set_busy_action(settings.firefly_busy_action, settings.firefly_keep_display_on);
+  g_firefly->set_busy_action(settings.firefly_busy_action, settings.firefly_keep_display_on,
+                            settings.firefly_custom_vk);
   win_settings::set_firefly_capabilities(g_firefly->capabilities());
   NotifyFireflyUi();
   return true;
@@ -321,6 +322,7 @@ void WinPlatformBackend::apply_settings(const Settings& s) {
   const std::string prev_led = settings_.firefly_led_mode;
   const std::string prev_busy = settings_.firefly_busy_action;
   const bool prev_keep_display = settings_.firefly_keep_display_on;
+  const int prev_custom_vk = settings_.firefly_custom_vk;
   settings_ = s;
   save_settings(settings_);
   notify_settings_changed(settings_);
@@ -336,8 +338,9 @@ void WinPlatformBackend::apply_settings(const Settings& s) {
   } else if (s.firefly_enabled && g_firefly) {
     if (s.firefly_caps_mode != prev_caps) g_firefly->set_caps_mode(s.firefly_caps_mode);
     if (s.firefly_led_mode != prev_led) g_firefly->set_led_mode(s.firefly_led_mode);
-    if (s.firefly_busy_action != prev_busy || s.firefly_keep_display_on != prev_keep_display) {
-      g_firefly->set_busy_action(s.firefly_busy_action, s.firefly_keep_display_on);
+    if (s.firefly_busy_action != prev_busy || s.firefly_keep_display_on != prev_keep_display ||
+        s.firefly_custom_vk != prev_custom_vk) {
+      g_firefly->set_busy_action(s.firefly_busy_action, s.firefly_keep_display_on, s.firefly_custom_vk);
     }
     win_settings::set_firefly_capabilities(g_firefly->capabilities());
   }

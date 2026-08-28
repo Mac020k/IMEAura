@@ -17,13 +17,15 @@ class FireflyBackend {
   virtual void stop() = 0;
   virtual void set_caps_mode(const std::string& mode) = 0;
   virtual void set_led_mode(const std::string& mode) = 0;
-  virtual void set_busy_action(const std::string& action, bool keep_display_on) = 0;
+  virtual void set_busy_action(const std::string& action, bool keep_display_on, int custom_vk) = 0;
   virtual void set_led(bool on) = 0;
   virtual void set_dnd(bool on) = 0;
   virtual void set_keep_awake(bool on, bool keep_display_on) = 0;
   virtual void set_mic_mute(bool on) = 0;
+  virtual void set_speaker_mute(bool on) = 0;
   virtual void trigger_voice_input() = 0;
-  virtual bool is_active() const = 0;  // Busy when true
+  virtual void trigger_custom_key(int vk) = 0;
+  virtual bool is_active() const = 0;  // Active when true
   virtual void poll() {}  // Optional event pump (Linux X11)
 };
 

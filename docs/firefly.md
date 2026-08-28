@@ -73,7 +73,8 @@ See `src/core/settings.{h,cpp}`:
 - `firefly_enabled`
 - `firefly_caps_mode`: `preserve` | `uppercase` | `lowercase`
 - `firefly_led_mode`: `auto` | `hid` | `none`
-- `firefly_busy_action`: `dnd` | `keep_awake` | `voice_input` | `meeting` | `hands_free` (default `dnd`)
+- `firefly_busy_action`: `dnd` | `keep_awake` | `voice_input` | `audio_mute` | `custom_key` (default `dnd`)
+- `firefly_custom_vk`: int — Windows virtual-key code for `custom_key` (0 = unassigned)
 - `firefly_keep_display_on`: bool — only used when `firefly_busy_action` is `keep_awake`
 
 On macOS and Linux, configure Firefly via `settings.json` until native settings UI parity is implemented.
@@ -86,9 +87,9 @@ When Firefly enters **Busy**, the CapsLock LED turns on and the selected action 
 | --- | --- |
 | `dnd` | Suppress notifications (default) |
 | `keep_awake` | Prevent idle sleep (`firefly_keep_display_on` optionally keeps the display on) |
-| `voice_input` | Trigger OS voice typing once on Busy entry |
-| `meeting` | Suppress notifications + mute microphone |
-| `hands_free` | Suppress notifications + trigger voice typing |
+| `voice_input` | Trigger OS voice typing once on Active entry |
+| `audio_mute` | Mute microphone and speakers while Active |
+| `custom_key` | Inject `firefly_custom_vk` once on Active entry |
 
 Leaving Busy or disabling Firefly restores backed-up system state when possible.
 
@@ -99,8 +100,8 @@ Leaving Busy or disabling Firefly restores backed-up system state when possible.
 | `dnd` | Yes | Yes | GNOME gsettings |
 | `keep_awake` | `SetThreadExecutionState` | `IOPMAssertion` | `systemd-inhibit` (when available) |
 | `voice_input` | `Win+H` inject | Dictation shortcut (Fn×2 default) | Not supported |
-| `meeting` | DND + mic mute | DND + mic mute | Not supported |
-| `hands_free` | DND + voice | DND + voice | Not supported |
+| `audio_mute` | Mic + speaker mute | Mic + speaker mute | Not supported |
+| `custom_key` | `SendInput` (VK) | CGEvent (key code) | XTest (partial) |
 
 ## Capabilities probe
 

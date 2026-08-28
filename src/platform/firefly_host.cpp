@@ -16,7 +16,8 @@ bool FireflyHost::start(const Settings& settings) {
     return false;
   }
   backend_->set_led_mode(settings.firefly_led_mode);
-  backend_->set_busy_action(settings.firefly_busy_action, settings.firefly_keep_display_on);
+  backend_->set_busy_action(settings.firefly_busy_action, settings.firefly_keep_display_on,
+                            settings.firefly_custom_vk);
   was_enabled_ = true;
   return true;
 }
@@ -44,7 +45,8 @@ bool FireflyHost::apply(const Settings& settings, Settings& mutable_settings) {
   if (want && backend_) {
     backend_->set_caps_mode(settings.firefly_caps_mode);
     backend_->set_led_mode(settings.firefly_led_mode);
-    backend_->set_busy_action(settings.firefly_busy_action, settings.firefly_keep_display_on);
+    backend_->set_busy_action(settings.firefly_busy_action, settings.firefly_keep_display_on,
+                            settings.firefly_custom_vk);
   }
   return true;
 }

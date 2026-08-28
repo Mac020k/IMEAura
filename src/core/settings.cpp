@@ -170,6 +170,8 @@ Settings normalize_settings(const Settings& raw) {
   s.firefly_caps_mode = normalize_caps_mode(s.firefly_caps_mode);
   s.firefly_busy_action = normalize_busy_action(s.firefly_busy_action);
   if (s.firefly_busy_action != kFireflyBusyKeepAwake) s.firefly_keep_display_on = false;
+  if (s.firefly_custom_vk < 0) s.firefly_custom_vk = 0;
+  if (s.firefly_custom_vk > 0xFE) s.firefly_custom_vk = 0xFE;
   if (s.display_mode != kDisplayModeOnFocus) s.show_on_hover = false;
   return s;
 }
@@ -253,6 +255,9 @@ bool load_settings(Settings& out) {
   if (const auto* v = root.find("firefly_keep_display_on")) {
     if (v->type == json::Value::Type::Bool) s.firefly_keep_display_on = v->bool_value;
   }
+  if (const auto* v = root.find("firefly_custom_vk")) {
+    if (v->type == json::Value::Type::Number) s.firefly_custom_vk = static_cast<int>(v->number_value);
+  }
   if (const auto* v = root.find("language")) {
     if (v->type == json::Value::Type::String) s.language = v->string_value;
   }
@@ -296,6 +301,7 @@ bool save_settings(const Settings& settings) {
       {"firefly_caps_mode", json::Value::make_string(s.firefly_caps_mode)},
       {"firefly_busy_action", json::Value::make_string(s.firefly_busy_action)},
       {"firefly_keep_display_on", json::Value::make_bool(s.firefly_keep_display_on)},
+      {"firefly_custom_vk", json::Value::make_number(static_cast<double>(s.firefly_custom_vk))},
       {"language", json::Value::make_string(s.language)},
       {"easy_quit", json::Value::make_bool(s.easy_quit)},
   });

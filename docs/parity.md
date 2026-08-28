@@ -58,7 +58,8 @@ Defined in `src/core/settings.{h,cpp}`:
 - `firefly_enabled`: boolean (default `false`)
 - `firefly_caps_mode`: `preserve` | `uppercase` | `lowercase` (default `uppercase`)
 - `firefly_led_mode`: `auto` | `hid` | `none` (default `auto`)
-- `firefly_busy_action`: `dnd` | `keep_awake` | `voice_input` | `meeting` | `hands_free` (default `dnd`)
+- `firefly_busy_action`: `dnd` | `keep_awake` | `voice_input` | `audio_mute` | `custom_key` (default `dnd`)
+- `firefly_custom_vk`: int (default `0`)
 - `firefly_keep_display_on`: boolean (only with `keep_awake`)
 
 Paths:

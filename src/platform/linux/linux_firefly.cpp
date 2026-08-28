@@ -202,13 +202,16 @@ struct LinuxFireflyBackend::Impl {
   bool dnd_ok = false;
   bool keep_awake_ok = false;
   bool mic_mute_ok = false;
+  bool speaker_mute_ok = false;
   bool voice_ok = false;
+  bool custom_key_ok = false;
   bool dnd_backed_up = false;
   bool use_sysfs_led = false;
   bool grabbed_keys = false;
   bool dnd_running = false;
   bool stopped = false;
   FILE* inhibit_proc = nullptr;
+  int custom_vk = 0;
 
   std::mutex dnd_mu;
   std::condition_variable dnd_cv;
@@ -274,7 +277,9 @@ FireflyCapabilities LinuxFireflyBackend::capabilities() const {
   c.can_set_dnd = impl_ ? impl_->dnd_ok : ProbeDnd();
   c.can_keep_awake = impl_ ? impl_->keep_awake_ok : ProbeKeepAwake();
   c.can_mute_mic = false;
+  c.can_mute_speaker = false;
   c.can_trigger_voice_input = false;
+  c.can_trigger_custom_key = impl_ && impl_->dpy != nullptr && impl_->xtest_ok;
   return c;
 }
 
@@ -287,7 +292,9 @@ bool LinuxFireflyBackend::start(std::function<void()> on_toggle, const std::stri
   impl_->dnd_ok = ProbeDnd();
   impl_->keep_awake_ok = ProbeKeepAwake();
   impl_->mic_mute_ok = false;
+  impl_->speaker_mute_ok = false;
   impl_->voice_ok = false;
+  impl_->custom_key_ok = impl_->dpy != nullptr && impl_->xtest_ok;
   impl_->hid_led_ok = SetLedSysfs(false);
 
   impl_->dpy = XOpenDisplay(nullptr);
@@ -387,14 +394,15 @@ void LinuxFireflyBackend::set_led_mode(const std::string& mode) {
   set_led(impl_->busy.load());
 }
 
-void LinuxFireflyBackend::set_busy_action(const std::string& action, bool keep_display_on) {
+void LinuxFireflyBackend::set_busy_action(const std::string& action, bool keep_display_on, int custom_vk) {
   if (!impl_) return;
   const bool was_busy = impl_->busy.load();
   if (was_busy) clear_sustained_busy_effects();
   impl_->busy_action = normalize_busy_action(action);
   impl_->keep_display_on = keep_display_on;
+  impl_->custom_vk = custom_vk;
   if (was_busy) {
-    const auto fx = resolve_busy_effects(impl_->busy_action, true, false, impl_->keep_display_on);
+    const auto fx = resolve_busy_effects(impl_->busy_action, true, false, impl_->keep_display_on, impl_->custom_vk);
     apply_busy_effects(fx);
   }
 }
@@ -433,7 +441,23 @@ void LinuxFireflyBackend::set_keep_awake(bool on, bool keep_display_on) {
 
 void LinuxFireflyBackend::set_mic_mute(bool) {}
 
+void LinuxFireflyBackend::set_speaker_mute(bool) {}
+
 void LinuxFireflyBackend::trigger_voice_input() {}
+
+void LinuxFireflyBackend::trigger_custom_key(int vk) {
+  if (!impl_ || !impl_->custom_key_ok || !impl_->dpy || vk <= 0) return;
+  KeySym sym = 0;
+  if (vk >= 0x70 && vk <= 0x87) sym = XK_F1 + (vk - 0x70);
+  else if (vk >= 0x30 && vk <= 0x39) sym = XK_0 + (vk - 0x30);
+  else if (vk >= 0x41 && vk <= 0x5A) sym = XK_a + (vk - 0x41);
+  else return;
+  const KeyCode code = XKeysymToKeycode(impl_->dpy, sym);
+  if (!code) return;
+  XTestFakeKeyEvent(impl_->dpy, code, True, 0);
+  XTestFakeKeyEvent(impl_->dpy, code, False, 0);
+  XFlush(impl_->dpy);
+}
 
 void LinuxFireflyBackend::clear_sustained_busy_effects() {
   set_dnd(false);
@@ -443,7 +467,10 @@ void LinuxFireflyBackend::clear_sustained_busy_effects() {
 void LinuxFireflyBackend::apply_busy_effects(const FireflyBusyEffects& fx) {
   set_dnd(fx.want_dnd);
   set_keep_awake(fx.want_keep_awake, fx.keep_display_on);
+  set_mic_mute(fx.want_mic_mute);
+  set_speaker_mute(fx.want_speaker_mute);
   if (fx.trigger_voice_input) trigger_voice_input();
+  if (fx.trigger_custom_key) trigger_custom_key(fx.custom_vk);
 }
 
 bool LinuxFireflyBackend::is_active() const { return impl_ && impl_->busy.load(); }
@@ -459,6 +486,7 @@ void LinuxFireflyBackend::handle_toggle() {
   in.current_active = prev;
   in.busy_action = impl_->busy_action;
   in.keep_display_on = impl_->keep_display_on;
+  in.custom_vk = impl_->custom_vk;
   const FireflyOutput out = evaluate_firefly(in);
   set_led(out.want_led_on);
   apply_busy_effects(out.effects);
