@@ -1,5 +1,6 @@
 #include "platform/windows/win_platform.h"
 
+#include "core/firefly.h"
 #include "core/i18n.h"
 #include "platform/windows/win_comp_edges.h"
 #include "platform/windows/win_firefly.h"
@@ -39,6 +40,7 @@ std::unique_ptr<WinFireflyBackend> g_firefly;
 
 void NotifyFireflyUi() {
   win_settings::set_firefly_active(g_firefly && g_firefly->is_active());
+  if (g_firefly) win_settings::set_firefly_capabilities(g_firefly->capabilities());
 }
 
 bool StartFirefly(const Settings& settings) {
@@ -55,6 +57,8 @@ bool StartFirefly(const Settings& settings) {
     return false;
   }
   g_firefly->set_led_mode(settings.firefly_led_mode);
+  g_firefly->set_busy_action(settings.firefly_busy_action, settings.firefly_keep_display_on);
+  win_settings::set_firefly_capabilities(g_firefly->capabilities());
   NotifyFireflyUi();
   return true;
 }
@@ -315,6 +319,8 @@ void WinPlatformBackend::apply_settings(const Settings& s) {
   const bool was_ff = settings_.firefly_enabled;
   const std::string prev_caps = settings_.firefly_caps_mode;
   const std::string prev_led = settings_.firefly_led_mode;
+  const std::string prev_busy = settings_.firefly_busy_action;
+  const bool prev_keep_display = settings_.firefly_keep_display_on;
   settings_ = s;
   save_settings(settings_);
   notify_settings_changed(settings_);
@@ -330,6 +336,10 @@ void WinPlatformBackend::apply_settings(const Settings& s) {
   } else if (s.firefly_enabled && g_firefly) {
     if (s.firefly_caps_mode != prev_caps) g_firefly->set_caps_mode(s.firefly_caps_mode);
     if (s.firefly_led_mode != prev_led) g_firefly->set_led_mode(s.firefly_led_mode);
+    if (s.firefly_busy_action != prev_busy || s.firefly_keep_display_on != prev_keep_display) {
+      g_firefly->set_busy_action(s.firefly_busy_action, s.firefly_keep_display_on);
+    }
+    win_settings::set_firefly_capabilities(g_firefly->capabilities());
   }
   win_settings::sync(settings_);
   update_state(true);

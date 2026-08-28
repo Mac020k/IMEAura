@@ -151,6 +151,13 @@ bool WriteGnomeDnd(bool on) {
 
 bool ProbeDnd() { return GnomeDndWritable(); }
 
+bool ProbeKeepAwake() {
+  FILE* f = popen("systemd-inhibit --what=idle:sleep --who=IMEAura --why=probe --mode=block sleep 0 2>/dev/null", "r");
+  if (!f) return false;
+  const int rc = pclose(f);
+  return rc == 0;
+}
+
 void BackupDnd() {
   bool on = false;
   if (!ReadGnomeDnd(on)) return;
@@ -187,15 +194,21 @@ struct LinuxFireflyBackend::Impl {
   std::atomic<bool> busy{false};
   std::string caps_mode = kFireflyCapsUppercase;
   std::string led_mode = kFireflyLedAuto;
+  std::string busy_action = kFireflyBusyDnd;
+  bool keep_display_on = false;
   bool preserved_caps_on = false;
   bool saved_caps_on = false;
   bool hid_led_ok = false;
   bool dnd_ok = false;
+  bool keep_awake_ok = false;
+  bool mic_mute_ok = false;
+  bool voice_ok = false;
   bool dnd_backed_up = false;
   bool use_sysfs_led = false;
   bool grabbed_keys = false;
   bool dnd_running = false;
   bool stopped = false;
+  FILE* inhibit_proc = nullptr;
 
   std::mutex dnd_mu;
   std::condition_variable dnd_cv;
@@ -259,6 +272,9 @@ FireflyCapabilities LinuxFireflyBackend::capabilities() const {
   c.can_intercept_caps = impl_ && impl_->dpy != nullptr;
   c.can_drive_led = true;
   c.can_set_dnd = impl_ ? impl_->dnd_ok : ProbeDnd();
+  c.can_keep_awake = impl_ ? impl_->keep_awake_ok : ProbeKeepAwake();
+  c.can_mute_mic = false;
+  c.can_trigger_voice_input = false;
   return c;
 }
 
@@ -269,6 +285,9 @@ bool LinuxFireflyBackend::start(std::function<void()> on_toggle, const std::stri
   impl_->caps_mode = caps_mode.empty() ? kFireflyCapsUppercase : caps_mode;
   impl_->busy.store(false);
   impl_->dnd_ok = ProbeDnd();
+  impl_->keep_awake_ok = ProbeKeepAwake();
+  impl_->mic_mute_ok = false;
+  impl_->voice_ok = false;
   impl_->hid_led_ok = SetLedSysfs(false);
 
   impl_->dpy = XOpenDisplay(nullptr);
@@ -338,6 +357,7 @@ void LinuxFireflyBackend::stop() {
   }
 
   if (impl_->dnd_backed_up) RestoreDnd();
+  clear_sustained_busy_effects();
   if (impl_->dpy) {
     if (impl_->caps_code) SetCapsLockState(impl_->dpy, impl_->caps_code, impl_->saved_caps_on);
     XCloseDisplay(impl_->dpy);
@@ -367,6 +387,18 @@ void LinuxFireflyBackend::set_led_mode(const std::string& mode) {
   set_led(impl_->busy.load());
 }
 
+void LinuxFireflyBackend::set_busy_action(const std::string& action, bool keep_display_on) {
+  if (!impl_) return;
+  const bool was_busy = impl_->busy.load();
+  if (was_busy) clear_sustained_busy_effects();
+  impl_->busy_action = normalize_busy_action(action);
+  impl_->keep_display_on = keep_display_on;
+  if (was_busy) {
+    const auto fx = resolve_busy_effects(impl_->busy_action, true, false, impl_->keep_display_on);
+    apply_busy_effects(fx);
+  }
+}
+
 void LinuxFireflyBackend::set_led(bool on) {
   if (!impl_) return;
   if (impl_->led_mode == kFireflyLedNone) return;
@@ -379,26 +411,57 @@ void LinuxFireflyBackend::set_led(bool on) {
 }
 
 void LinuxFireflyBackend::set_dnd(bool on) {
-  if (!impl_) return;
+  if (!impl_ || !impl_->dnd_ok) return;
   std::lock_guard lk(impl_->dnd_mu);
   impl_->dnd_target = on;
   impl_->dnd_pending = true;
   impl_->dnd_cv.notify_one();
 }
 
+void LinuxFireflyBackend::set_keep_awake(bool on, bool keep_display_on) {
+  if (!impl_ || !impl_->keep_awake_ok) return;
+  if (on && !impl_->inhibit_proc) {
+    std::string what = keep_display_on ? "idle:sleep:handle-lid-switch" : "idle:sleep";
+    const std::string cmd =
+        "systemd-inhibit --what=" + what + " --who=IMEAura --why=Firefly --mode=block sleep infinity";
+    impl_->inhibit_proc = popen(cmd.c_str(), "r");
+  } else if (!on && impl_->inhibit_proc) {
+    pclose(impl_->inhibit_proc);
+    impl_->inhibit_proc = nullptr;
+  }
+}
+
+void LinuxFireflyBackend::set_mic_mute(bool) {}
+
+void LinuxFireflyBackend::trigger_voice_input() {}
+
+void LinuxFireflyBackend::clear_sustained_busy_effects() {
+  set_dnd(false);
+  set_keep_awake(false, false);
+}
+
+void LinuxFireflyBackend::apply_busy_effects(const FireflyBusyEffects& fx) {
+  set_dnd(fx.want_dnd);
+  set_keep_awake(fx.want_keep_awake, fx.keep_display_on);
+  if (fx.trigger_voice_input) trigger_voice_input();
+}
+
 bool LinuxFireflyBackend::is_active() const { return impl_ && impl_->busy.load(); }
 
 void LinuxFireflyBackend::handle_toggle() {
   if (!impl_) return;
-  const bool next = !impl_->busy.load();
+  const bool prev = impl_->busy.load();
+  const bool next = !prev;
   impl_->busy.store(next);
   FireflyInput in{};
   in.enabled = true;
   in.toggle_requested = true;
-  in.current_active = !next;
+  in.current_active = prev;
+  in.busy_action = impl_->busy_action;
+  in.keep_display_on = impl_->keep_display_on;
   const FireflyOutput out = evaluate_firefly(in);
   set_led(out.want_led_on);
-  set_dnd(out.want_dnd);
+  apply_busy_effects(out.effects);
   if (impl_->on_toggle) impl_->on_toggle();
 }
 

@@ -62,6 +62,18 @@ enum class StringId {
   kFireflyLedOk,
   kFireflyDndOk,
   kFireflyUnsupported,
+  kFireflyBusySection,
+  kFireflyBusyChange,
+  kFireflyBusyBack,
+  kFireflyBusyDnd,
+  kFireflyBusyKeepAwake,
+  kFireflyBusyVoiceInput,
+  kFireflyBusyMeeting,
+  kFireflyBusyHandsFree,
+  kFireflyKeepDisplayOn,
+  kFireflyKeepAwakeOk,
+  kFireflyVoiceOk,
+  kFireflyMicOk,
   kColorDialogTitle,
   kColorDialogRgb,
   kColorDialogHsb,
@@ -77,5 +89,6 @@ const wchar_t* tr(Lang lang, StringId id);
 Lang lang_from_key(const std::string& key);
 const wchar_t* lang_font_family(Lang lang);
 StringId string_id_for_ui_lang(const std::string& key);
+StringId string_id_for_busy_action(const std::string& action_key);
 
 }  // namespace imeaura

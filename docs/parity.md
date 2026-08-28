@@ -28,7 +28,7 @@ Native implementation: C++20 in `src/`.
 - [x] Color picker supports alpha channel (RGBA sliders)
 - [x] Gradient thickness clamped to half of monitor min dimension
 - [x] Text-input hover/focus updates within ~100 ms (worker callback + 100 ms poll)
-- [x] Firefly: CapsLock Available/Busy toggle, LED, DND (Windows / macOS / Linux X11)
+- [x] Firefly: CapsLock Available/Busy toggle, LED, busy actions (Windows settings UI + JSON)
 - [x] UI languages: ja / en / zh-Hans / zh-Hant / ko (General → language picker page)
 - [x] Settings UI on Windows, macOS (AppKit), and Linux (GTK4)
 
@@ -58,6 +58,8 @@ Defined in `src/core/settings.{h,cpp}`:
 - `firefly_enabled`: boolean (default `false`)
 - `firefly_caps_mode`: `preserve` | `uppercase` | `lowercase` (default `uppercase`)
 - `firefly_led_mode`: `auto` | `hid` | `none` (default `auto`)
+- `firefly_busy_action`: `dnd` | `keep_awake` | `voice_input` | `meeting` | `hands_free` (default `dnd`)
+- `firefly_keep_display_on`: boolean (only with `keep_awake`)
 
 Paths:
 

@@ -73,8 +73,34 @@ See `src/core/settings.{h,cpp}`:
 - `firefly_enabled`
 - `firefly_caps_mode`: `preserve` | `uppercase` | `lowercase`
 - `firefly_led_mode`: `auto` | `hid` | `none`
+- `firefly_busy_action`: `dnd` | `keep_awake` | `voice_input` | `meeting` | `hands_free` (default `dnd`)
+- `firefly_keep_display_on`: bool — only used when `firefly_busy_action` is `keep_awake`
 
 On macOS and Linux, configure Firefly via `settings.json` until native settings UI parity is implemented.
+
+## Busy actions
+
+When Firefly enters **Busy**, the CapsLock LED turns on and the selected action applies:
+
+| Key | Busy effect |
+| --- | --- |
+| `dnd` | Suppress notifications (default) |
+| `keep_awake` | Prevent idle sleep (`firefly_keep_display_on` optionally keeps the display on) |
+| `voice_input` | Trigger OS voice typing once on Busy entry |
+| `meeting` | Suppress notifications + mute microphone |
+| `hands_free` | Suppress notifications + trigger voice typing |
+
+Leaving Busy or disabling Firefly restores backed-up system state when possible.
+
+### Platform support
+
+| Action | Windows | macOS | Linux (X11) |
+| --- | --- | --- | --- |
+| `dnd` | Yes | Yes | GNOME gsettings |
+| `keep_awake` | `SetThreadExecutionState` | `IOPMAssertion` | `systemd-inhibit` (when available) |
+| `voice_input` | `Win+H` inject | Dictation shortcut (Fn×2 default) | Not supported |
+| `meeting` | DND + mic mute | DND + mic mute | Not supported |
+| `hands_free` | DND + voice | DND + voice | Not supported |
 
 ## Capabilities probe
 
@@ -83,5 +109,8 @@ Each backend implements `FireflyCapabilities`:
 - `can_intercept_caps` — hook/tap/grab installed
 - `can_drive_led` — LED path available
 - `can_set_dnd` — DND write path probed successfully
+- `can_keep_awake` — sleep prevention available
+- `can_mute_mic` — default capture device mute available
+- `can_trigger_voice_input` — OS voice typing shortcut can be injected
 
-Windows settings UI surfaces these; other platforms rely on JSON + logs today.
+Windows settings UI surfaces these; unsupported busy actions are grayed out in the picker.

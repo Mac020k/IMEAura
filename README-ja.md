@@ -124,17 +124,19 @@ JSON として保存されます (`src/core/settings.{h,cpp}`):
 | `firefly_enabled` | bool | `false` |
 | `firefly_caps_mode` | `preserve` \| `uppercase` \| `lowercase` | `uppercase` |
 | `firefly_led_mode` | `auto` \| `hid` \| `none` | `auto` |
+| `firefly_busy_action` | `dnd` \| `keep_awake` \| `voice_input` \| `meeting` \| `hands_free` | `dnd` |
+| `firefly_keep_display_on` | bool (`keep_awake` 時のみ) | `false` |
 
 色スロットを ja/en の次に追加すると、既定色は順に `#16CC7B`、`#F1D60F`、`#E6690C`、`#7E43D5`、`#636363` です。
 
 ## Firefly (Windows / macOS / Linux/X11)
 
-Firefly は、IME Aura 動作中に物理 **CapsLock** キーを Available / Busy (おやすみモード) トグルに割り当てます。
+Firefly は、IME Aura 動作中に物理 **CapsLock** キーを Available / Busy トグルに割り当てます。Busy 時の動作は設定 (Windows UI) または `firefly_busy_action` で選択します (`dnd` / `keep_awake` / `voice_input` / `meeting` / `hands_free`)。
 
-| 状態 | 意味 | CapsLock LED (LED 制御オン時) | 通知 |
-| --- | --- | --- | --- |
-| **Available** | 有効化直後の既定 | 消灯 | 通常 |
-| **Busy** | CapsLock 押下後 | 点灯 | 抑制 |
+| 状態 | 意味 | CapsLock LED (LED 制御オン時) |
+| --- | --- | --- |
+| **Available** | 有効化直後の既定 | 消灯 |
+| **Busy** | CapsLock 押下後 | 点灯 |
 
 - Firefly を有効にすると、常に **Available** から開始します。
 - CapsLock を押すたびに Available ↔ Busy を切り替えます。

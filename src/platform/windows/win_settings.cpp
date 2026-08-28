@@ -66,7 +66,7 @@ struct SlotExitGhost {
   SlotRowRects from{};
   SlotRowRects to{};
 };
-enum class Page { Main, LangPicker };
+enum class Page { Main, LangPicker, FireflyBusyPicker };
 
 enum class Hit : int {
   None = 0,
@@ -94,11 +94,15 @@ enum class Hit : int {
   FireflyCapsPreserve,
   FireflyCapsUppercase,
   FireflyCapsLowercase,
+  FireflyBusyChange,
+  FireflyBusyBack,
+  FireflyKeepDisplay,
   AddSlot,
   SlotLang0 = 100,
   SlotSwatch0 = 200,
   SlotRemove0 = 300,
   LangPick0 = 400,
+  BusyPick0 = 500,
 };
 
 enum class AlignH { Left, Center };
@@ -619,12 +623,20 @@ class SettingsUi {
 
   void update_tab_bar_h(const UiMetrics& um) {
     tab_bar_h_cached_ =
-        (page_ == Page::LangPicker) ? 0 : std::max(dip(kUiTabBarHeight), um.row_h);
+        on_picker_page() ? 0 : std::max(dip(kUiTabBarHeight), um.row_h);
   }
 
   int tab_bar_h() const {
-    if (page_ == Page::LangPicker) return 0;
+    if (on_picker_page()) return 0;
     return tab_bar_h_cached_ > 0 ? tab_bar_h_cached_ : dip(kUiTabBarHeight);
+  }
+
+  bool on_picker_page() const {
+    return page_ == Page::LangPicker || page_ == Page::FireflyBusyPicker;
+  }
+
+  bool busy_action_selectable(std::string_view action) const {
+    return busy_action_supported(action, firefly_caps_);
   }
 
   void scroll_by(int delta) {
@@ -679,7 +691,7 @@ class SettingsUi {
   }
 
   void activate_tab(Tab tab) {
-    if (page_ == Page::LangPicker) page_ = Page::Main;
+    if (on_picker_page()) page_ = Page::Main;
     if (active_tab_ != tab) {
       start_tab_anim(active_tab_rect(), tab_rect(tab));
       active_tab_ = tab;
@@ -1075,6 +1087,18 @@ class SettingsUi {
         const bool on = settings_.language == cat[i].id;
         paint_radio(lang_pick_rows_[i], on, tr(lang(), string_id_for_ui_lang(cat[i].id)), body_fmt.Get());
       }
+    } else if (page_ == Page::FireflyBusyPicker) {
+      paint_back_button(ff_busy_back_, body_fmt.Get(), hover_ == Hit::FireflyBusyBack);
+      draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kFireflyBusySection), r2f(ff_busy_picker_title_),
+                C(kUiText), AlignH::Left, AlignV::Center);
+      const auto& catalog = busy_action_catalog();
+      for (size_t i = 0; i < catalog.size() && i < ff_busy_pick_rows_.size(); ++i) {
+        const bool on = settings_.firefly_busy_action == catalog[i];
+        const bool supported = busy_action_selectable(catalog[i]);
+        const float alpha = supported ? 1.f : 0.45f;
+        paint_radio(ff_busy_pick_rows_[i], on, tr(lang(), string_id_for_busy_action(std::string(catalog[i]))),
+                    body_fmt.Get(), alpha);
+      }
     } else if (active_tab_ == Tab::Aura) {
     const float settings_alpha = settings_.aura_enabled ? 1.f : 0.45f;
 
@@ -1142,6 +1166,23 @@ class SettingsUi {
       draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflySub), r2f(ff_sub_), C(kUiTextSecondary));
       paint_toggle_row(ff_toggle_, toggle_v(ToggleId::Firefly), tr(lang(), StringId::kFireflyEnable), body_fmt.Get());
 
+      draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflyBusySection), r2f(ff_busy_title_),
+                C(kUiTextSecondary, caps_alpha));
+      fill_round(rt_.Get(), r2f(ff_busy_change_), dip(10),
+                 hover_ == Hit::FireflyBusyChange ? C(kUiFillHover) : C(kUiFill));
+      {
+        wchar_t busy_btn[128];
+        swprintf_s(busy_btn, L"%s: %s", tr(lang(), StringId::kFireflyBusyChange),
+                   tr(lang(), string_id_for_busy_action(settings_.firefly_busy_action)));
+        draw_text(rt_.Get(), body_fmt.Get(), busy_btn, r2f(ff_busy_change_), C(kUiText, caps_alpha), AlignH::Center,
+                  AlignV::Center, false);
+      }
+      if (settings_.firefly_enabled && settings_.firefly_busy_action == kFireflyBusyKeepAwake &&
+          ff_keep_display_.bottom > ff_keep_display_.top) {
+        paint_check(ff_keep_display_, settings_.firefly_keep_display_on, tr(lang(), StringId::kFireflyKeepDisplayOn),
+                    body_fmt.Get(), caps_alpha);
+      }
+
       draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflyCapsSection), r2f(ff_caps_title_),
                 C(kUiTextSecondary, caps_alpha));
       paint_radio(ff_caps_preserve_, settings_.firefly_caps_mode == kFireflyCapsPreserve,
@@ -1161,10 +1202,29 @@ class SettingsUi {
         paint_status_lamp(ff_caps_ok_, firefly_caps_ok_, lamp_on, tr(lang(), StringId::kFireflyCapsOk),
                           sub_fmt.Get());
         paint_status_lamp(ff_led_ok_, firefly_led_ok_, lamp_on, tr(lang(), StringId::kFireflyLedOk), sub_fmt.Get());
-        paint_status_lamp(ff_dnd_ok_, firefly_dnd_ok_, lamp_on, tr(lang(), StringId::kFireflyDndOk), sub_fmt.Get());
-        if (!firefly_caps_ok_ || !firefly_led_ok_ || !firefly_dnd_ok_) {
-          RECT uns = ff_dnd_ok_;
-          uns.top = ff_dnd_ok_.bottom + dip(kUiRowGap);
+        if (busy_action_requires_dnd(settings_.firefly_busy_action)) {
+          paint_status_lamp(ff_dnd_ok_, firefly_dnd_ok_, lamp_on, tr(lang(), StringId::kFireflyDndOk), sub_fmt.Get());
+        }
+        if (busy_action_requires_keep_awake(settings_.firefly_busy_action)) {
+          paint_status_lamp(ff_keep_awake_ok_, firefly_keep_awake_ok_, lamp_on, tr(lang(), StringId::kFireflyKeepAwakeOk),
+                            sub_fmt.Get());
+        }
+        if (busy_action_requires_voice_input(settings_.firefly_busy_action)) {
+          paint_status_lamp(ff_voice_ok_, firefly_voice_ok_, lamp_on, tr(lang(), StringId::kFireflyVoiceOk),
+                            sub_fmt.Get());
+        }
+        if (busy_action_requires_mic_mute(settings_.firefly_busy_action)) {
+          paint_status_lamp(ff_mic_ok_, firefly_mic_ok_, lamp_on, tr(lang(), StringId::kFireflyMicOk), sub_fmt.Get());
+        }
+        const bool action_ok = busy_action_selectable(settings_.firefly_busy_action);
+        if (!firefly_caps_ok_ || !firefly_led_ok_ || !action_ok ||
+            (busy_action_requires_dnd(settings_.firefly_busy_action) && !firefly_dnd_ok_) ||
+            (busy_action_requires_keep_awake(settings_.firefly_busy_action) && !firefly_keep_awake_ok_) ||
+            (busy_action_requires_voice_input(settings_.firefly_busy_action) && !firefly_voice_ok_) ||
+            (busy_action_requires_mic_mute(settings_.firefly_busy_action) && !firefly_mic_ok_)) {
+          RECT uns = ff_status_;
+          uns.top = ff_mic_ok_.bottom > ff_status_.bottom ? ff_mic_ok_.bottom : ff_dnd_ok_.bottom;
+          uns.top += dip(kUiRowGap);
           uns.bottom = uns.top + um.sub_h;
           draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflyUnsupported), r2f(uns),
                     C(kUiTextSecondary), AlignH::Left, AlignV::Center);
@@ -1721,7 +1781,7 @@ class SettingsUi {
     draw_text(rt_.Get(), fmt, label, text, C(kUiText, alpha), AlignH::Left, AlignV::Center);
   }
 
-  void paint_check(const RECT& rc, bool on, const wchar_t* label, IDWriteTextFormat* fmt) {
+  void paint_check(const RECT& rc, bool on, const wchar_t* label, IDWriteTextFormat* fmt, float alpha = 1.f) {
     const float s = static_cast<float>(std::max(1, dip(14)));
     const float x = static_cast<float>(rc.left + dip(4));
     const float y = (rc.top + rc.bottom) * 0.5f - s * 0.5f;
@@ -1746,7 +1806,7 @@ class SettingsUi {
 
     D2D1_RECT_F text = r2f(rc);
     text.left = x + s + static_cast<float>(dip(kUiRowGap));
-    draw_text(rt_.Get(), fmt, label, text, C(kUiText), AlignH::Left, AlignV::Center);
+    draw_text(rt_.Get(), fmt, label, text, C(kUiText, alpha), AlignH::Left, AlignV::Center);
   }
 
   void paint_segments() {
@@ -1876,6 +1936,27 @@ class SettingsUi {
       return;
     }
 
+    if (page_ == Page::FireflyBusyPicker) {
+      int y = m;
+      const int header_h = std::max(row, um.title_h);
+      const int back_w = std::min(w0, um.back_btn_w);
+      ff_busy_back_ = box(x0, y, back_w, header_h);
+      const int title_x = ff_busy_back_.right + gap;
+      ff_busy_picker_title_ = box(title_x, y, std::max(0, x0 + w0 - title_x), header_h);
+      y += header_h + sec;
+      ff_busy_pick_rows_.clear();
+      const auto& catalog = busy_action_catalog();
+      for (size_t i = 0; i < catalog.size(); ++i) {
+        const int rh = std::max(
+            row, wrapped(body_fmt, tr(lang(), string_id_for_busy_action(std::string(catalog[i]))), w1) + dip(kUiButtonPadY));
+        ff_busy_pick_rows_.push_back(box(x1, y, w1, rh));
+        y += rh + radio_gap;
+      }
+      y += m;
+      content_height_ = y;
+      return;
+    }
+
     if (active_tab_ == Tab::Aura) {
       int y = m;
       aura_title_ = box(x0, y, w0, um.title_h);
@@ -1976,6 +2057,21 @@ class SettingsUi {
       ff_toggle_ = box(x0, y, w0, row);
       y += row + sec;
       {
+        const int rh = wrapped(sub_fmt, tr(lang(), StringId::kFireflyBusySection), w1);
+        ff_busy_title_ = box(x1, y, w1, rh);
+        y += rh + gap;
+      }
+      ff_busy_change_ = box(x1, y, w1, row);
+      y += row + gap;
+      if (settings_.firefly_busy_action == kFireflyBusyKeepAwake) {
+        const int rh = std::max(row, wrapped(body_fmt, tr(lang(), StringId::kFireflyKeepDisplayOn), w1) + dip(4));
+        ff_keep_display_ = box(x1, y, w1, rh);
+        y += rh + gap;
+      } else {
+        ff_keep_display_ = box(x1, y, 0, 0);
+      }
+      y += sec - gap;
+      {
         const int rh = wrapped(sub_fmt, tr(lang(), StringId::kFireflyCapsSection), w1);
         ff_caps_title_ = box(x1, y, w1, rh);
         y += rh + gap;
@@ -1996,7 +2092,14 @@ class SettingsUi {
       ff_led_ok_ = box(x1, y, w1, std::max(um.sub_h, wrapped(sub_fmt, tr(lang(), StringId::kFireflyLedOk), w1)));
       y += (ff_led_ok_.bottom - ff_led_ok_.top) + dip(kUiSpace1);
       ff_dnd_ok_ = box(x1, y, w1, std::max(um.sub_h, wrapped(sub_fmt, tr(lang(), StringId::kFireflyDndOk), w1)));
-      y += (ff_dnd_ok_.bottom - ff_dnd_ok_.top) + m;
+      y += (ff_dnd_ok_.bottom - ff_dnd_ok_.top) + dip(kUiSpace1);
+      ff_keep_awake_ok_ =
+          box(x1, y, w1, std::max(um.sub_h, wrapped(sub_fmt, tr(lang(), StringId::kFireflyKeepAwakeOk), w1)));
+      y += (ff_keep_awake_ok_.bottom - ff_keep_awake_ok_.top) + dip(kUiSpace1);
+      ff_voice_ok_ = box(x1, y, w1, std::max(um.sub_h, wrapped(sub_fmt, tr(lang(), StringId::kFireflyVoiceOk), w1)));
+      y += (ff_voice_ok_.bottom - ff_voice_ok_.top) + dip(kUiSpace1);
+      ff_mic_ok_ = box(x1, y, w1, std::max(um.sub_h, wrapped(sub_fmt, tr(lang(), StringId::kFireflyMicOk), w1)));
+      y += (ff_mic_ok_.bottom - ff_mic_ok_.top) + m;
       content_height_ = y;
     } else {
       int y = m;
@@ -2051,14 +2154,14 @@ class SettingsUi {
   }
 
   Hit hit_test(int x, int y) const {
-    if (page_ != Page::LangPicker) {
+    if (!on_picker_page()) {
       if (contains(tab_aura_, x, y)) return Hit::TabAura;
       if (contains(tab_firefly_, x, y)) return Hit::TabFirefly;
       if (contains(tab_general_, x, y)) return Hit::TabGeneral;
     }
 
     const int tab_h = tab_bar_h();
-    if (page_ != Page::LangPicker && y < tab_h) return Hit::None;
+    if (!on_picker_page() && y < tab_h) return Hit::None;
     const int cy = y - tab_h + scroll_y_;
 
     if (scroll_max_ > 0 && contains(scroll_bar_, x, y)) return Hit::ScrollBar;
@@ -2068,6 +2171,16 @@ class SettingsUi {
       for (size_t i = 0; i < lang_pick_rows_.size(); ++i) {
         if (contains(lang_pick_rows_[i], x, cy))
           return static_cast<Hit>(static_cast<int>(Hit::LangPick0) + static_cast<int>(i));
+      }
+      return Hit::None;
+    }
+    if (page_ == Page::FireflyBusyPicker) {
+      if (contains(ff_busy_back_, x, cy)) return Hit::FireflyBusyBack;
+      const auto& catalog = busy_action_catalog();
+      for (size_t i = 0; i < catalog.size() && i < ff_busy_pick_rows_.size(); ++i) {
+        if (!busy_action_selectable(catalog[i])) continue;
+        if (contains(ff_busy_pick_rows_[i], x, cy))
+          return static_cast<Hit>(static_cast<int>(Hit::BusyPick0) + static_cast<int>(i));
       }
       return Hit::None;
     }
@@ -2113,6 +2226,10 @@ class SettingsUi {
     } else if (active_tab_ == Tab::Firefly) {
       if (contains(ff_toggle_, x, cy)) return Hit::FireflyToggle;
       if (settings_.firefly_enabled) {
+        if (contains(ff_busy_change_, x, cy)) return Hit::FireflyBusyChange;
+        if (settings_.firefly_busy_action == kFireflyBusyKeepAwake && ff_keep_display_.bottom > ff_keep_display_.top &&
+            contains(ff_keep_display_, x, cy))
+          return Hit::FireflyKeepDisplay;
         if (contains(ff_caps_preserve_, x, cy)) return Hit::FireflyCapsPreserve;
         if (contains(ff_caps_upper_, x, cy)) return Hit::FireflyCapsUppercase;
         if (contains(ff_caps_lower_, x, cy)) return Hit::FireflyCapsLowercase;
@@ -2258,6 +2375,19 @@ class SettingsUi {
         settings_.firefly_caps_mode = kFireflyCapsLowercase;
         emit();
         break;
+      case Hit::FireflyBusyChange:
+        page_ = Page::FireflyBusyPicker;
+        scroll_y_ = 0;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        break;
+      case Hit::FireflyBusyBack:
+        page_ = Page::Main;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        break;
+      case Hit::FireflyKeepDisplay:
+        settings_.firefly_keep_display_on = !settings_.firefly_keep_display_on;
+        emit();
+        break;
       case Hit::ScrollBar:
         dragging_scroll_ = true;
         break;
@@ -2401,6 +2531,16 @@ class SettingsUi {
             settings_.language = cat[i].id;
             emit();
           }
+        } else if (hv >= static_cast<int>(Hit::BusyPick0) &&
+                   hv < static_cast<int>(Hit::BusyPick0) + 16) {
+          const auto& catalog = busy_action_catalog();
+          const size_t i = static_cast<size_t>(hv - static_cast<int>(Hit::BusyPick0));
+          if (i < catalog.size() && busy_action_selectable(catalog[i])) {
+            settings_.firefly_busy_action = std::string(catalog[i]);
+            settings_ = normalize_settings(settings_);
+            page_ = Page::Main;
+            emit();
+          }
         }
         break;
       }
@@ -2450,22 +2590,42 @@ class SettingsUi {
   int tab_content_h_[3]{0, 0, 0};
   RECT lang_change_{}, lang_rule_{}, lang_picker_title_{}, lang_back_{};
   std::vector<RECT> lang_pick_rows_;
-  RECT ff_title_{}, ff_sub_{}, ff_toggle_{}, ff_caps_title_{}, ff_caps_preserve_{}, ff_caps_upper_{},
-      ff_caps_lower_{};
-  RECT ff_status_{}, ff_caps_ok_{}, ff_led_ok_{}, ff_dnd_ok_{};
+  RECT ff_title_{}, ff_sub_{}, ff_toggle_{}, ff_busy_title_{}, ff_busy_change_{}, ff_keep_display_{}, ff_caps_title_{},
+      ff_caps_preserve_{}, ff_caps_upper_{}, ff_caps_lower_{};
+  RECT ff_status_{}, ff_caps_ok_{}, ff_led_ok_{}, ff_dnd_ok_{}, ff_keep_awake_ok_{}, ff_voice_ok_{}, ff_mic_ok_{};
+  RECT ff_busy_back_{}, ff_busy_picker_title_{};
+  std::vector<RECT> ff_busy_pick_rows_;
+  FireflyCapabilities firefly_caps_{};
   bool firefly_active_ = false;
   bool firefly_caps_ok_ = true;
   bool firefly_led_ok_ = true;
   bool firefly_dnd_ok_ = true;
+  bool firefly_keep_awake_ok_ = true;
+  bool firefly_voice_ok_ = true;
+  bool firefly_mic_ok_ = true;
   bool save_pending_ = false;
 
  public:
   void set_firefly_active(bool active) {
     if (firefly_active_ == active) return;
     firefly_active_ = active;
-    firefly_caps_ok_ = true;
-    firefly_led_ok_ = true;
-    firefly_dnd_ok_ = true;
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+  }
+
+  void set_firefly_capabilities(const FireflyCapabilities& caps) {
+    firefly_caps_ = caps;
+    firefly_caps_ok_ = caps.can_intercept_caps;
+    firefly_led_ok_ = caps.can_drive_led;
+    firefly_dnd_ok_ = caps.can_set_dnd;
+    firefly_keep_awake_ok_ = caps.can_keep_awake;
+    firefly_voice_ok_ = caps.can_trigger_voice_input;
+    firefly_mic_ok_ = caps.can_mute_mic;
+    if (!busy_action_selectable(settings_.firefly_busy_action)) {
+      settings_.firefly_busy_action = kFireflyBusyDnd;
+      settings_.firefly_keep_display_on = false;
+      settings_ = normalize_settings(settings_);
+      if (callback_) callback_(settings_);
+    }
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
   }
 
@@ -2536,6 +2696,7 @@ bool visible() { return g_ui.visible(); }
 HWND hwnd() { return g_ui.hwnd(); }
 void sync(const Settings& settings) { g_ui.sync(settings); }
 void set_firefly_active(bool active) { g_ui.set_firefly_active(active); }
+void set_firefly_capabilities(const FireflyCapabilities& caps) { g_ui.set_firefly_capabilities(caps); }
 
 }  // namespace win_settings
 }  // namespace imeaura

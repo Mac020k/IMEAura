@@ -124,17 +124,21 @@ Stored as JSON (`src/core/settings.{h,cpp}`):
 | `firefly_enabled` | bool | `false` |
 | `firefly_caps_mode` | `preserve` \| `uppercase` \| `lowercase` | `uppercase` |
 | `firefly_led_mode` | `auto` \| `hid` \| `none` | `auto` |
+| `firefly_busy_action` | `dnd` \| `keep_awake` \| `voice_input` \| `meeting` \| `hands_free` | `dnd` |
+| `firefly_keep_display_on` | bool (only with `keep_awake`) | `false` |
 
 When adding a color slot beyond the default ja/en pair, default colors are applied in order: `#16CC7B`, `#F1D60F`, `#E6690C`, `#7E43D5`, `#636363`.
 
 ## Firefly (Windows, macOS, Linux/X11)
 
-Firefly remaps the physical **CapsLock** key to an Available / Busy (Do Not Disturb) toggle while IME Aura is running.
+Firefly remaps the physical **CapsLock** key to an Available / Busy toggle while IME Aura is running. Choose the Busy action in settings (Windows UI) or via `firefly_busy_action` in JSON.
 
-| State | Meaning | CapsLock LED (if LED control is on) | Notifications |
-| --- | --- | --- | --- |
-| **Available** | Default after enable | Off | Normal |
-| **Busy** | After CapsLock press | On | Suppressed |
+| State | Meaning | CapsLock LED (if LED control is on) |
+| --- | --- | --- |
+| **Available** | Default after enable | Off |
+| **Busy** | After CapsLock press | On |
+
+Busy actions include notification suppression (`dnd`), sleep prevention (`keep_awake`), voice typing (`voice_input`), meeting mode (`meeting`), and hands-free writing (`hands_free`). See [docs/firefly.md](docs/firefly.md) for platform support.
 
 - Enabling Firefly always starts in **Available**.
 - Each CapsLock press toggles Available ↔ Busy.

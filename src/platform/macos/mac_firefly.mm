@@ -5,6 +5,8 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
+#include <CoreAudio/CoreAudio.h>
+#include <IOKit/pwr_mgt/IOPMLib.h>
 #include <dispatch/dispatch.h>
 
 #include <atomic>
@@ -107,6 +109,40 @@ bool ProbeDnd() {
   return ReadDndState(dummy) || WriteDndState(false);
 }
 
+bool ProbeKeepAwake() {
+  IOPMAssertionID id = 0;
+  const IOReturn rc =
+      IOPMAssertionCreateWithName(kIOPMAssertionTypeNoIdleSleep, kIOPMAssertionLevelOn, CFSTR("IMEAura Firefly"), &id);
+  if (rc == kIOReturnSuccess) IOPMAssertionRelease(id);
+  return rc == kIOReturnSuccess;
+}
+
+bool GetDefaultInputDevice(AudioDeviceID* out) {
+  if (!out) return false;
+  AudioObjectPropertyAddress addr = {kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal,
+                                     kAudioObjectPropertyElementMain};
+  UInt32 size = sizeof(*out);
+  return AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr, 0, nullptr, &size, out) == noErr && *out != 0;
+}
+
+bool ProbeMicMute() {
+  AudioDeviceID device = 0;
+  if (!GetDefaultInputDevice(&device)) return false;
+  AudioObjectPropertyAddress mute_addr = {kAudioDevicePropertyMute, kAudioDevicePropertyScopeInput,
+                                          kAudioObjectPropertyElementMain};
+  return AudioObjectHasProperty(device, &mute_addr);
+}
+
+bool ProbeVoiceInput() { return true; }
+
+void SendDictationShortcut() {
+  constexpr CGKeyCode kFn = 0x3F;
+  SendTaggedVk(kFn, true);
+  SendTaggedVk(kFn, false);
+  SendTaggedVk(kFn, true);
+  SendTaggedVk(kFn, false);
+}
+
 void BackupDnd() {
   bool on = false;
   if (!ReadDndState(on)) return;
@@ -189,10 +225,19 @@ struct MacFireflyBackend::Impl {
   std::atomic<bool> busy{false};
   std::string caps_mode = kFireflyCapsUppercase;
   std::string led_mode = kFireflyLedAuto;
+  std::string busy_action = kFireflyBusyDnd;
+  bool keep_display_on = false;
   bool preserved_caps_on = false;
   bool saved_caps_on = false;
   bool dnd_ok = false;
+  bool keep_awake_ok = false;
+  bool mic_mute_ok = false;
+  bool voice_ok = false;
   bool dnd_backed_up = false;
+  IOPMAssertionID keep_awake_id = 0;
+  IOPMAssertionID keep_display_id = 0;
+  bool mic_saved_valid = false;
+  UInt32 mic_was_muted = 0;
 
   std::mutex dnd_mu;
   std::condition_variable dnd_cv;
@@ -224,6 +269,9 @@ FireflyCapabilities MacFireflyBackend::capabilities() const {
   c.can_intercept_caps = true;
   c.can_drive_led = true;
   c.can_set_dnd = impl_ ? impl_->dnd_ok : ProbeDnd();
+  c.can_keep_awake = impl_ ? impl_->keep_awake_ok : ProbeKeepAwake();
+  c.can_mute_mic = impl_ ? impl_->mic_mute_ok : ProbeMicMute();
+  c.can_trigger_voice_input = impl_ ? impl_->voice_ok : ProbeVoiceInput();
   return c;
 }
 
@@ -236,6 +284,9 @@ bool MacFireflyBackend::start(std::function<void()> on_toggle, const std::string
   impl_->saved_caps_on = CapsLockOn();
   impl_->preserved_caps_on = impl_->saved_caps_on;
   impl_->dnd_ok = ProbeDnd();
+  impl_->keep_awake_ok = ProbeKeepAwake();
+  impl_->mic_mute_ok = ProbeMicMute();
+  impl_->voice_ok = ProbeVoiceInput();
 
   if (impl_->caps_mode == kFireflyCapsUppercase) {
     SetCapsLockState(true);
@@ -294,6 +345,7 @@ void MacFireflyBackend::stop() {
   if (impl_->dnd_thread.joinable()) impl_->dnd_thread.join();
 
   if (impl_->dnd_backed_up) RestoreDnd();
+  clear_sustained_busy_effects();
   SetCapsLockState(impl_->saved_caps_on);
   delete impl_;
   impl_ = nullptr;
@@ -318,6 +370,18 @@ void MacFireflyBackend::set_led_mode(const std::string& mode) {
   set_led(impl_->busy.load());
 }
 
+void MacFireflyBackend::set_busy_action(const std::string& action, bool keep_display_on) {
+  if (!impl_) return;
+  const bool was_busy = impl_->busy.load();
+  if (was_busy) clear_sustained_busy_effects();
+  impl_->busy_action = normalize_busy_action(action);
+  impl_->keep_display_on = keep_display_on;
+  if (was_busy) {
+    const auto fx = resolve_busy_effects(impl_->busy_action, true, false, impl_->keep_display_on);
+    apply_busy_effects(fx);
+  }
+}
+
 void MacFireflyBackend::set_led(bool on) {
   if (!impl_) return;
   if (impl_->led_mode == kFireflyLedNone) return;
@@ -327,11 +391,77 @@ void MacFireflyBackend::set_led(bool on) {
 }
 
 void MacFireflyBackend::set_dnd(bool on) {
-  if (!impl_) return;
+  if (!impl_ || !impl_->dnd_ok) return;
   std::lock_guard lk(impl_->dnd_mu);
   impl_->dnd_target = on;
   impl_->dnd_pending = true;
   impl_->dnd_cv.notify_one();
+}
+
+void MacFireflyBackend::set_keep_awake(bool on, bool keep_display_on) {
+  if (!impl_ || !impl_->keep_awake_ok) return;
+  if (on) {
+    if (!impl_->keep_awake_id) {
+      IOPMAssertionCreateWithName(kIOPMAssertionTypeNoIdleSleep, kIOPMAssertionLevelOn, CFSTR("IMEAura Firefly"),
+                                  &impl_->keep_awake_id);
+    }
+    if (keep_display_on && !impl_->keep_display_id) {
+      IOPMAssertionCreateWithName(kIOPMAssertionTypeNoDisplaySleep, kIOPMAssertionLevelOn, CFSTR("IMEAura Firefly"),
+                                  &impl_->keep_display_id);
+    }
+  } else {
+    if (impl_->keep_display_id) {
+      IOPMAssertionRelease(impl_->keep_display_id);
+      impl_->keep_display_id = 0;
+    }
+    if (impl_->keep_awake_id) {
+      IOPMAssertionRelease(impl_->keep_awake_id);
+      impl_->keep_awake_id = 0;
+    }
+  }
+  if (on && !keep_display_on && impl_->keep_display_id) {
+    IOPMAssertionRelease(impl_->keep_display_id);
+    impl_->keep_display_id = 0;
+  }
+}
+
+void MacFireflyBackend::set_mic_mute(bool on) {
+  if (!impl_ || !impl_->mic_mute_ok) return;
+  AudioDeviceID device = 0;
+  if (!GetDefaultInputDevice(&device)) return;
+  AudioObjectPropertyAddress mute_addr = {kAudioDevicePropertyMute, kAudioDevicePropertyScopeInput,
+                                          kAudioObjectPropertyElementMain};
+  if (!AudioObjectHasProperty(device, &mute_addr)) return;
+  if (on) {
+    if (!impl_->mic_saved_valid) {
+      UInt32 size = sizeof(impl_->mic_was_muted);
+      AudioObjectGetPropertyData(device, &mute_addr, 0, nullptr, &size, &impl_->mic_was_muted);
+      impl_->mic_saved_valid = true;
+    }
+    const UInt32 mute = 1;
+    AudioObjectSetPropertyData(device, &mute_addr, 0, nullptr, sizeof(mute), &mute);
+  } else if (impl_->mic_saved_valid) {
+    AudioObjectSetPropertyData(device, &mute_addr, 0, nullptr, sizeof(impl_->mic_was_muted), &impl_->mic_was_muted);
+    impl_->mic_saved_valid = false;
+  }
+}
+
+void MacFireflyBackend::trigger_voice_input() {
+  if (!impl_ || !impl_->voice_ok) return;
+  SendDictationShortcut();
+}
+
+void MacFireflyBackend::clear_sustained_busy_effects() {
+  set_dnd(false);
+  set_keep_awake(false, false);
+  set_mic_mute(false);
+}
+
+void MacFireflyBackend::apply_busy_effects(const FireflyBusyEffects& fx) {
+  set_dnd(fx.want_dnd);
+  set_keep_awake(fx.want_keep_awake, fx.keep_display_on);
+  set_mic_mute(fx.want_mic_mute);
+  if (fx.trigger_voice_input) trigger_voice_input();
 }
 
 bool MacFireflyBackend::is_active() const { return impl_ && impl_->busy.load(); }
@@ -344,15 +474,18 @@ bool MacFireflyBackend::preserved_caps_for_remap() const { return impl_ ? impl_-
 
 void MacFireflyBackend::handle_toggle() {
   if (!impl_) return;
-  const bool next = !impl_->busy.load();
+  const bool prev = impl_->busy.load();
+  const bool next = !prev;
   impl_->busy.store(next);
   FireflyInput in{};
   in.enabled = true;
   in.toggle_requested = true;
-  in.current_active = !next;
+  in.current_active = prev;
+  in.busy_action = impl_->busy_action;
+  in.keep_display_on = impl_->keep_display_on;
   const FireflyOutput out = evaluate_firefly(in);
   set_led(out.want_led_on);
-  set_dnd(out.want_dnd);
+  apply_busy_effects(out.effects);
   if (impl_->on_toggle) impl_->on_toggle();
 }
 
