@@ -45,6 +45,11 @@ constexpr float kTabAnimDurationMs = 200.f;
 constexpr UINT kSlotAnimTimerId = 9;
 constexpr UINT kSlotAnimFrameMs = 16;
 constexpr float kSlotAnimDurationMs = 240.f;
+constexpr UINT kToggleAnimTimerId = 10;
+constexpr UINT kToggleAnimFrameMs = 16;
+constexpr float kToggleAnimDurationMs = 200.f;
+
+enum class ToggleId : int { Aura = 0, Firefly = 1, EasyQuit = 2, Count = 3 };
 
 enum class Tab { Aura, Firefly, General };
 enum class SlotAnimKind { None, Add, Remove };
@@ -137,6 +142,10 @@ float ease_out_cubic(float t) {
 
 float lerp_f(float a, float b, float t) { return a + (b - a) * t; }
 
+D2D1_COLOR_F lerp_color(const D2D1_COLOR_F& a, const D2D1_COLOR_F& b, float t) {
+  return D2D1::ColorF(lerp_f(a.r, b.r, t), lerp_f(a.g, b.g, t), lerp_f(a.b, b.b, t), lerp_f(a.a, b.a, t));
+}
+
 bool rect_valid(const RECT& r) { return r.right > r.left && r.bottom > r.top; }
 
 bool rect_empty(const RECT& r) { return r.right <= r.left && r.bottom <= r.top; }
@@ -202,6 +211,7 @@ class SettingsUi {
     DWORD corner = kDwmCornerRound;
     DwmSetWindowAttribute(hwnd_, kDwmWindowCornerPreference, &corner, sizeof(corner));
     win_set_window_icons(hwnd_);
+    sync_toggle_v_from_settings();
     return true;
   }
 
@@ -253,6 +263,7 @@ class SettingsUi {
     // apply_settings() echoes back through sync() after every emit(); skip while animating.
     if (slot_anim_pending_ || slot_anim_active()) return;
     settings_ = normalize_settings(s);
+    sync_toggle_v_from_settings();
     InvalidateRect(hwnd_, nullptr, FALSE);
   }
 
@@ -367,6 +378,7 @@ class SettingsUi {
         if (wp == kSegmentTimerId) tick_segment();
         if (wp == kTabAnimTimerId) tick_tab_anim();
         if (wp == kSlotAnimTimerId) tick_slot_anim();
+        if (wp == kToggleAnimTimerId) tick_toggle_anim();
         return 0;
       case WM_SETCURSOR:
         if (LOWORD(lp) == HTCLIENT) {
@@ -387,6 +399,7 @@ class SettingsUi {
         return 0;
       case WM_DESTROY:
         KillTimer(hwnd_, kSlotAnimTimerId);
+        KillTimer(hwnd_, kToggleAnimTimerId);
         hwnd_ = nullptr;
         return 0;
       default:
@@ -739,6 +752,51 @@ class SettingsUi {
     if (t >= 1.f) KillTimer(hwnd_, kSegmentTimerId);
   }
 
+  void sync_toggle_v_from_settings() {
+    const bool on[static_cast<int>(ToggleId::Count)] = {settings_.aura_enabled, settings_.firefly_enabled,
+                                                        settings_.easy_quit};
+    for (int i = 0; i < static_cast<int>(ToggleId::Count); ++i) {
+      if (!toggle_anim_active_[i]) toggle_v_[i] = on[i] ? 1.f : 0.f;
+    }
+  }
+
+  void start_toggle_anim(ToggleId id, bool to_on) {
+    const int idx = static_cast<int>(id);
+    const float target = to_on ? 1.f : 0.f;
+    if (prefers_reduced_motion()) {
+      toggle_v_[idx] = target;
+      toggle_anim_active_[idx] = false;
+      InvalidateRect(hwnd_, nullptr, FALSE);
+      return;
+    }
+    toggle_from_[idx] = toggle_v_[idx];
+    toggle_to_[idx] = target;
+    toggle_anim_active_[idx] = true;
+    toggle_anim_start_[idx] = std::chrono::steady_clock::now();
+    SetTimer(hwnd_, kToggleAnimTimerId, kToggleAnimFrameMs, nullptr);
+  }
+
+  void tick_toggle_anim() {
+    const auto now = std::chrono::steady_clock::now();
+    bool any_active = false;
+    for (int i = 0; i < static_cast<int>(ToggleId::Count); ++i) {
+      if (!toggle_anim_active_[i]) continue;
+      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - toggle_anim_start_[i]).count();
+      const float raw = std::clamp(static_cast<float>(elapsed) / kToggleAnimDurationMs, 0.f, 1.f);
+      toggle_v_[i] = lerp_f(toggle_from_[i], toggle_to_[i], ease_out_cubic(raw));
+      if (raw < 1.f) {
+        any_active = true;
+      } else {
+        toggle_anim_active_[i] = false;
+        toggle_v_[i] = toggle_to_[i];
+      }
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    if (!any_active) KillTimer(hwnd_, kToggleAnimTimerId);
+  }
+
+  float toggle_v(ToggleId id) const { return toggle_v_[static_cast<int>(id)]; }
+
   void reset_slot_anim() {
     if (hwnd_) KillTimer(hwnd_, kSlotAnimTimerId);
     slot_anim_t_ = 1.f;
@@ -1022,7 +1080,7 @@ class SettingsUi {
 
     draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kAuraTitle), r2f(aura_title_), C(kUiText));
     draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kAuraSub), r2f(aura_sub_), C(kUiTextSecondary));
-    paint_toggle_row(aura_toggle_, settings_.aura_enabled, tr(lang(), StringId::kAuraEnable), body_fmt.Get());
+    paint_toggle_row(aura_toggle_, toggle_v(ToggleId::Aura), tr(lang(), StringId::kAuraEnable), body_fmt.Get());
 
     draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kColorSection), r2f(sec_color_title_),
               C(kUiText, settings_alpha));
@@ -1082,7 +1140,7 @@ class SettingsUi {
 
       draw_text(rt_.Get(), title_fmt.Get(), tr(lang(), StringId::kFireflyTitle), r2f(ff_title_), C(kUiText));
       draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflySub), r2f(ff_sub_), C(kUiTextSecondary));
-      paint_toggle_row(ff_toggle_, settings_.firefly_enabled, tr(lang(), StringId::kFireflyEnable), body_fmt.Get());
+      paint_toggle_row(ff_toggle_, toggle_v(ToggleId::Firefly), tr(lang(), StringId::kFireflyEnable), body_fmt.Get());
 
       draw_text(rt_.Get(), sub_fmt.Get(), tr(lang(), StringId::kFireflyCapsSection), r2f(ff_caps_title_),
                 C(kUiTextSecondary, caps_alpha));
@@ -1144,7 +1202,7 @@ class SettingsUi {
                 false);
       paint_rule(lang_rule_);
       easy_quit_ = box(m, gy, inner, row);
-      paint_toggle_row(easy_quit_, settings_.easy_quit, tr(lang(), StringId::kEasyQuit), body_fmt.Get());
+      paint_toggle_row(easy_quit_, toggle_v(ToggleId::EasyQuit), tr(lang(), StringId::kEasyQuit), body_fmt.Get());
     }
 
     paint_rule(rule4_);
@@ -1304,7 +1362,7 @@ class SettingsUi {
     // img/icon_tab_firefly.svg uses viewBox 0 0 24 20 (center 12, 10).
     const float s = size / 24.f;
     auto P = [&](float x, float y) { return D2D1::Point2F(cx + (x - 12.f) * s, cy + (y - 10.f) * s); };
-    const float stroke = std::max(1.25f, size * (2.f / 24.f));
+    const float stroke = std::max(1.25f, size * (1.5f / 24.f));
     draw_icon_stroke(stroke, color, [&](ID2D1GeometrySink* sink) {
       sink->BeginFigure(P(10.f, 11.f), D2D1_FIGURE_BEGIN_HOLLOW);
       sink->AddBezier(D2D1::BezierSegment(P(4.5f, 13.f), P(4.5f, 19.f), P(10.f, 17.f)));
@@ -1325,7 +1383,7 @@ class SettingsUi {
     if (!brush) return;
     const float s = size / 24.f;
     auto P = [&](float x, float y) { return D2D1::Point2F(cx + (x - 12.f) * s, cy + (y - 12.f) * s); };
-    const float stroke = std::max(1.25f, size * (2.f / 24.f));
+    const float stroke = std::max(1.25f, size * (1.5f / 24.f));
     const float hub_r = std::max(1.f, 3.f * s);
     rt_->DrawEllipse(D2D1::Ellipse(P(12.f, 12.f), hub_r, hub_r), brush.Get(), stroke);
     rt_->DrawLine(P(12.f, 4.f), P(12.f, 8.5f), brush.Get(), stroke);
@@ -1397,7 +1455,7 @@ class SettingsUi {
       case Tab::Firefly: {
         const float s = size / 24.f;
         auto P = [&](float x, float y) { return D2D1::Point2F(cx + (x - 12.f) * s, cy + (y - 10.f) * s); };
-        const float base_stroke = std::max(1.25f, size * (2.f / 24.f));
+        const float base_stroke = std::max(1.25f, size * (1.5f / 24.f));
         ComPtr<ID2D1PathGeometry> wings;
         if (SUCCEEDED(fac->CreatePathGeometry(wings.GetAddressOf())) && wings) {
           ComPtr<ID2D1GeometrySink> sink;
@@ -1432,7 +1490,7 @@ class SettingsUi {
       case Tab::General: {
         const float s = size / 24.f;
         auto P = [&](float x, float y) { return D2D1::Point2F(cx + (x - 12.f) * s, cy + (y - 12.f) * s); };
-        const float base_stroke = std::max(1.25f, size * (2.f / 24.f));
+        const float base_stroke = std::max(1.25f, size * (1.5f / 24.f));
         const float hub_r = std::max(1.f, 3.f * s);
         const D2D1_ELLIPSE hub = D2D1::Ellipse(P(12.f, 12.f), hub_r, hub_r);
         paint_tab_stroke_glow(base_stroke, [&](float stroke, ID2D1SolidColorBrush* brush) {
@@ -1525,7 +1583,7 @@ class SettingsUi {
               AlignV::Center);
   }
 
-  void paint_toggle_row(const RECT& rc, bool on, const wchar_t* label, IDWriteTextFormat* fmt) {
+  void paint_toggle_row(const RECT& rc, float v, const wchar_t* label, IDWriteTextFormat* fmt) {
     const int tw = dip(kUiToggleW);
     const int th = dip(kUiToggleH);
     const int knob = dip(kUiToggleKnob);
@@ -1534,9 +1592,9 @@ class SettingsUi {
     const float track = static_cast<float>(rc.right - dip(4) - tw);
     const D2D1_RECT_F trc =
         D2D1::RectF(track, static_cast<float>(ty), track + static_cast<float>(tw), static_cast<float>(ty + th));
-    const float v = on ? 1.f : 0.f;
-    fill_round(rt_.Get(), trc, static_cast<float>(th) * 0.5f, v > 0.5f ? C(kDefaultColorEn) : C(kUiFill));
-    const float kx = trc.left + 3.f + (tw - knob - 6) * v;
+    const float t = std::clamp(v, 0.f, 1.f);
+    fill_round(rt_.Get(), trc, static_cast<float>(th) * 0.5f, lerp_color(C(kUiFill), C(kDefaultColorEn), t));
+    const float kx = trc.left + 3.f + (tw - knob - 6) * t;
     const float ky = trc.top + (th - knob) * 0.5f;
     ComPtr<ID2D1SolidColorBrush> knob_br;
     rt_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 1), knob_br.GetAddressOf());
@@ -2180,11 +2238,14 @@ class SettingsUi {
       case Hit::TabGeneral:
         activate_tab(Tab::General);
         break;
-      case Hit::FireflyToggle:
-        settings_.firefly_enabled = !settings_.firefly_enabled;
-        if (!settings_.firefly_enabled) firefly_active_ = false;
+      case Hit::FireflyToggle: {
+        const bool next = !settings_.firefly_enabled;
+        start_toggle_anim(ToggleId::Firefly, next);
+        settings_.firefly_enabled = next;
+        if (!next) firefly_active_ = false;
         emit();
         break;
+      }
       case Hit::FireflyCapsPreserve:
         settings_.firefly_caps_mode = kFireflyCapsPreserve;
         emit();
@@ -2258,10 +2319,13 @@ class SettingsUi {
         settings_.display_mode = kDisplayModeOnFocus;
         emit();
         break;
-      case Hit::AuraToggle:
-        settings_.aura_enabled = !settings_.aura_enabled;
+      case Hit::AuraToggle: {
+        const bool next = !settings_.aura_enabled;
+        start_toggle_anim(ToggleId::Aura, next);
+        settings_.aura_enabled = next;
         emit();
         break;
+      }
       case Hit::Hover:
         settings_.show_on_hover = !settings_.show_on_hover;
         emit();
@@ -2290,10 +2354,13 @@ class SettingsUi {
       case Hit::About:
         win_show_about_dialog(hwnd_);
         break;
-      case Hit::EasyQuitToggle:
-        settings_.easy_quit = !settings_.easy_quit;
+      case Hit::EasyQuitToggle: {
+        const bool next = !settings_.easy_quit;
+        start_toggle_anim(ToggleId::EasyQuit, next);
+        settings_.easy_quit = next;
         emit();
         break;
+      }
       case Hit::Quit:
         if (settings_.easy_quit ||
             MessageBoxW(hwnd_, tr(lang(), StringId::kQuitConfirmBody), tr(lang(), StringId::kQuitConfirmTitle),
@@ -2427,6 +2494,11 @@ class SettingsUi {
   SlotExitGhost slot_exit_{};
   float slot_anim_t_ = 1.f;
   std::chrono::steady_clock::time_point slot_anim_start_{};
+  float toggle_v_[static_cast<int>(ToggleId::Count)] = {0.f, 0.f, 0.f};
+  float toggle_from_[static_cast<int>(ToggleId::Count)] = {0.f, 0.f, 0.f};
+  float toggle_to_[static_cast<int>(ToggleId::Count)] = {0.f, 0.f, 0.f};
+  bool toggle_anim_active_[static_cast<int>(ToggleId::Count)] = {false, false, false};
+  std::chrono::steady_clock::time_point toggle_anim_start_[static_cast<int>(ToggleId::Count)]{};
 
   Lang lang() const { return lang_from_key(settings_.language); }
 
