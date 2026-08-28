@@ -302,6 +302,7 @@ NSImage* LoadUiIcon(const char* relative, NSString* accessibilityLabel) {
 }
 
 - (void)syncSettings {
+  using namespace imeaura;
   using namespace imeaura::mac_settings_state;
   self.fireflyToggle.state = settings.firefly_enabled ? NSControlStateValueOn : NSControlStateValueOff;
   const Lang ui_lang = lang_from_key(settings.language);
