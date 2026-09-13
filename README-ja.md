@@ -163,6 +163,8 @@ Firefly は、IME Aura 動作中に物理 **CapsLock** キーを Available / Bus
 
 日本語 IME の変換入力はそのまま通します。Ctrl / Alt / Win ショートカットはリマップしません。
 
+Windows では、ラテン A–Z の書き換えはテキスト欄にフォーカスがあるときだけ行い、それ以外 (ゲームやショートカット) では物理仮想キーを通します。CapsLock 自体は引き続き Busy トグル用にグローバル消費します。macOS / Linux はテキストフォーカス検出が未実装のため、従来どおり常時リマップです。
+
 ### LED モード (`firefly_led_mode`)
 
 | 値 | 効果 |
@@ -171,7 +173,7 @@ Firefly は、IME Aura 動作中に物理 **CapsLock** キーを Available / Bus
 | `hid` | HID/sysfs のみで LED を駆動 (Windows HID レポート; Linux sysfs) |
 | `none` | Busy / Available 用に CapsLock LED を駆動しない |
 
-Windows では CapsLock LED と文字の大文字小文字は同一のトグルビットを共有します。Firefly の既定パスはそのビットを Busy ランプに使い、ラテン A–Z を書き換えて `firefly_caps_mode` XOR Shift に従う大文字小文字にします。
+Windows では CapsLock LED と文字の大文字小文字は同一のトグルビットを共有します。Firefly の既定パスはそのビットを Busy ランプに使い、**テキスト欄フォーカス中**にラテン A–Z を書き換えて `firefly_caps_mode` XOR Shift に従う大文字小文字にします。
 
 ## プロジェクト構成
 

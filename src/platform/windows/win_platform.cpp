@@ -326,7 +326,6 @@ void WinPlatformBackend::apply_settings(const Settings& s) {
   settings_ = s;
   save_settings(settings_);
   notify_settings_changed(settings_);
-  sync_text_watchers();
   if (s.firefly_enabled && !was_ff) {
     if (!StartFirefly(settings_)) {
       settings_.firefly_enabled = false;
@@ -344,6 +343,7 @@ void WinPlatformBackend::apply_settings(const Settings& s) {
     }
     win_settings::set_firefly_capabilities(g_firefly->capabilities());
   }
+  sync_text_watchers();
   win_settings::sync(settings_);
   update_state(true);
 }
@@ -379,9 +379,12 @@ void WinPlatformBackend::recreate_overlay() {
 }
 
 void WinPlatformBackend::sync_text_watchers() {
-  if (settings_.display_mode == kDisplayModeOnFocus) {
+  const bool need_text =
+      settings_.display_mode == kDisplayModeOnFocus || settings_.firefly_enabled;
+  if (need_text) {
     win_text_input_start();
-    win_text_input_set_hover_enabled(settings_.show_on_hover);
+    win_text_input_set_hover_enabled(settings_.display_mode == kDisplayModeOnFocus &&
+                                     settings_.show_on_hover);
   } else {
     win_text_input_stop();
   }

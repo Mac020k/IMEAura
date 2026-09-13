@@ -647,7 +647,9 @@ LRESULT WinFireflyBackend::filter_key(int code, WPARAM wp, LPARAM lp) {
   }
 
   if (!impl_->use_plan_b && kbd->vkCode >= 'A' && kbd->vkCode <= 'Z') {
-    if (!ModifiersDown() && !win_is_japanese_input()) {
+    const bool text_entry = win_text_input_focused() || win_native_edit_is_focused();
+    if (firefly_should_remap_letters(ModifiersDown(), win_is_japanese_input(), text_entry,
+                                     /*text_context_available=*/true)) {
       if (down) {
         const bool upper =
             firefly_want_uppercase(impl_->caps_mode, ShiftDown(), impl_->preserved_caps_on);

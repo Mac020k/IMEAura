@@ -84,4 +84,11 @@ bool busy_action_supported(std::string_view action, const FireflyCapabilities& c
 // Returns true for uppercase, false for lowercase.
 bool firefly_want_uppercase(const std::string& caps_mode, bool shift_down, bool preserved_caps_on);
 
+// Whether Latin A–Z should be rewritten to Unicode for caps_mode.
+// When text_context_available is false (no platform text-focus detector), remaps
+// whenever modifiers/IME allow — legacy always-on behavior.
+// When true, remaps only while text_entry_context is true (games-safe passthrough).
+bool firefly_should_remap_letters(bool modifiers_down, bool ime_composing_or_jp, bool text_entry_context,
+                                  bool text_context_available);
+
 }  // namespace imeaura

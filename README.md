@@ -165,6 +165,8 @@ See [docs/firefly.md](docs/firefly.md) for architecture and per-OS requirements.
 
 Japanese IME composition is passed through. Ctrl / Alt / Win shortcuts are not remapped.
 
+On Windows, Latin A–Z are rewritten only while a text field has focus. Outside text entry (games, shortcuts), physical virtual keys pass through so WASD-style controls keep working. CapsLock itself remains globally remapped to the Busy toggle. macOS and Linux keep always-on letter remap until text-focus detection lands.
+
 ### LED mode (`firefly_led_mode`)
 
 | Value | Effect |
@@ -173,7 +175,7 @@ Japanese IME composition is passed through. Ctrl / Alt / Win shortcuts are not r
 | `hid` | Drive LED via HID/sysfs only (Windows HID report; Linux sysfs) |
 | `none` | Do not drive CapsLock LED for Busy / Available |
 
-On Windows, CapsLock LED and letter case share one toggle bit. Firefly’s default path uses that bit as the Busy lamp and rewrites Latin A–Z so case follows `firefly_caps_mode` XOR Shift.
+On Windows, CapsLock LED and letter case share one toggle bit. Firefly’s default path uses that bit as the Busy lamp and, **while a text field is focused**, rewrites Latin A–Z so case follows `firefly_caps_mode` XOR Shift.
 
 ## Project layout
 

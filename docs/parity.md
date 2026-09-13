@@ -94,7 +94,8 @@ Probe JSON includes `ime_lang` and legacy `ime_japanese`.
 4. General → Change language → pick zh-Hans / ko etc. → UI strings update.
 5. Add up to 7 color slots; confirm add-slot default colors `#16CC7B`…`#636363`.
 6. Verify Firefly still skips Caps remap while Japanese IME is active (`*_is_japanese_input`).
-7. macOS / Linux: open settings from status/tray equivalent; edit Aura slots and UI language.
+7. On Windows, verify Latin A–Z remap only while a text field is focused; games/shortcuts receive physical VKs.
+8. macOS / Linux: open settings from status/tray equivalent; edit Aura slots and UI language.
 
 ## Firefly compatibility (do not regress)
 

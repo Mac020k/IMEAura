@@ -150,6 +150,13 @@ int main() {
   EXPECT(firefly_want_uppercase(kFireflyCapsPreserve, false, true));
   EXPECT(!firefly_want_uppercase(kFireflyCapsPreserve, false, false));
 
+  EXPECT(firefly_should_remap_letters(false, false, true, true));
+  EXPECT(!firefly_should_remap_letters(false, false, false, true));
+  EXPECT(firefly_should_remap_letters(false, false, false, false));
+  EXPECT(!firefly_should_remap_letters(true, false, true, true));
+  EXPECT(!firefly_should_remap_letters(false, true, true, true));
+  EXPECT(!firefly_should_remap_letters(true, true, true, false));
+
   {
     Settings raw{};
     raw.firefly_enabled = true;

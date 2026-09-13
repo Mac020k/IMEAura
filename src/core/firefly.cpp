@@ -131,4 +131,11 @@ bool firefly_want_uppercase(const std::string& caps_mode, bool shift_down, bool 
   return base_upper != shift_down;
 }
 
+bool firefly_should_remap_letters(bool modifiers_down, bool ime_composing_or_jp, bool text_entry_context,
+                                  bool text_context_available) {
+  if (modifiers_down || ime_composing_or_jp) return false;
+  if (!text_context_available) return true;
+  return text_entry_context;
+}
+
 }  // namespace imeaura

@@ -233,7 +233,9 @@ CGEventRef EventTapCallback(CGEventTapProxy, CGEventType type, CGEventRef event,
       break;
     }
   }
-  if (letter >= 0 && !ModifiersDown() && !mac_is_japanese_input()) {
+  if (letter >= 0 &&
+      firefly_should_remap_letters(ModifiersDown(), mac_is_japanese_input(), /*text_entry_context=*/false,
+                                   /*text_context_available=*/false)) {
     if (down && g_self) {
       const bool upper = firefly_want_uppercase(g_self->caps_mode_for_remap(), ShiftDown(),
                                                 g_self->preserved_caps_for_remap());

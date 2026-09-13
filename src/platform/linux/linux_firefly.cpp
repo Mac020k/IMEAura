@@ -505,7 +505,9 @@ void LinuxFireflyBackend::process_x11_events() {
     if (ev.type == KeyPress || ev.type == KeyRelease) {
       const KeySym sym = XkbKeycodeToKeysym(impl_->dpy, ev.xkey.keycode, 0, 0);
       if ((sym >= XK_a && sym <= XK_z) || (sym >= XK_A && sym <= XK_Z)) {
-        if (!ModifiersDown(impl_->dpy) && !linux_is_japanese_input()) {
+        if (firefly_should_remap_letters(ModifiersDown(impl_->dpy), linux_is_japanese_input(),
+                                         /*text_entry_context=*/false,
+                                         /*text_context_available=*/false)) {
           if (ev.type == KeyPress) {
             const bool upper =
                 firefly_want_uppercase(impl_->caps_mode, ShiftDown(impl_->dpy), impl_->preserved_caps_on);

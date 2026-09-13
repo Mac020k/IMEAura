@@ -30,7 +30,10 @@ Settings (JSON) ──► FireflyHost ──► FireflyBackend (per OS)
 
 - CapsLock press toggles Available ↔ Busy; enable always starts Available.
 - Latin A–Z remapped per `firefly_caps_mode` XOR Shift when not composing Japanese and no Ctrl/Alt/Super held.
+  - **Windows**: remap only while a text field has focus; elsewhere physical VKs pass through (games/shortcut safe).
+  - **macOS / Linux**: text-focus gating is not available yet; remap stays always-on (legacy).
 - Japanese IME composition passes through.
+- CapsLock remains globally consumed for the Busy toggle on all platforms.
 - Disabling Firefly restores prior CapsLock state and backed-up DND when possible.
 - Fail-closed: if the intercept hook/tap/grab cannot be installed, `firefly_enabled` is cleared and startup refuses enable.
 
@@ -39,7 +42,7 @@ Settings (JSON) ──► FireflyHost ──► FireflyBackend (per OS)
 | Capability | Mechanism |
 | --- | --- |
 | Key intercept | Low-level keyboard hook (`WH_KEYBOARD_LL`) |
-| Letter remap | `SendInput` with inject tag |
+| Letter remap | `SendInput` with inject tag (text-focus gated) |
 | LED `auto` | CapsLock toggle bit |
 | LED `hid` | HID keyboard LED output report |
 | DND | Registry Quiet Hours profile swap + `WpnUserService_*` restart |
